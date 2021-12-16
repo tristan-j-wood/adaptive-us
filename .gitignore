@@ -1,6 +1,7 @@
 
 .idea/
 adaptive_us.egg-info/
+adaptiveus.egg-info/
 dist/
 build/
 *DS_store
