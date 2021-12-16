@@ -1,8 +1,0 @@
-README.md
-setup.py
-adaptiveus/__init__.py
-adaptiveus/adaptive.py
-adaptiveus.egg-info/PKG-INFO
-adaptiveus.egg-info/SOURCES.txt
-adaptiveus.egg-info/dependency_links.txt
-adaptiveus.egg-info/top_level.txt
