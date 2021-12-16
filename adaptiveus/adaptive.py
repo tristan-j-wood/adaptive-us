@@ -1,4 +1,4 @@
-import adaptiveus
+from adaptiveus.log import logger
 import numpy as np
 from typing import Optional
 
