@@ -1,7 +1,7 @@
 from adaptiveus.log import logger
 import numpy as np
 from scipy.optimize import curve_fit
-from typing import Optional
+from typing import Optional, List
 import matplotlib.pyplot as plt
 plt.style.use('paper')
 
@@ -10,14 +10,29 @@ class Window:
     """Data associated with a window from US"""
 
     def __init__(self):
-        """"""
+        """
+        Window from an umbrella sampling simulation. The data in this
+        window can be used to fit a Gaussian. The convergence of this data
+        can be tested.
+        """
 
-        self.window_num = None
-        self.ref_zeta = None
-        self.kappa = None
-        self.obs_zeta = None
+        self.window_num:    Optional[int] = None
+        self.ref_zeta:      Optional[float] = None
+        self.kappa:         Optional[float] = None
+        self.obs_zetas:      Optional[list] = None
 
         self.gaussian = _Gaussian()
+
+    @property
+    def traj_len(self):
+        return len(self.obs_zetas)
+
+    @property
+    def window_range(self):
+        min_x = min(self.obs_zetas) * 0.9
+        max_x = max(self.obs_zetas) * 1.1
+
+        return np.linspace(min_x, max_x, 500)
 
     def load(self, filename: str) -> None:
         """
@@ -41,41 +56,82 @@ class Window:
         self.kappa = float(header_line.split()[2])
 
         try:
-            self.obs_zeta = [float(line) for line in file_lines]
+            self.obs_zetas = [float(line) for line in file_lines]
 
         except ValueError:
             logger.error("Could not convert file zetas into floats. Is the "
                          "format in the file correct?")
 
-        assert self.obs_zeta is not None
-        self.gaussian.fit_gaussian(self.obs_zeta)
-
         return None
 
-    def plot_data(self):
+    def plot_data(self, filename='fitted_data.pdf'):
         """Histograms the data and optionally plots the fitted Gaussian"""
 
-        if self.obs_zeta is None:
+        if self.obs_zetas is None:
             raise ValueError("Observed zetas are None. Is the data loaded?")
 
-        min_x = min(self.obs_zeta) * 0.9
-        max_x = max(self.obs_zeta) * 1.1
+        self.gaussian.fit_gaussian(self.obs_zetas)
 
-        x_range = np.linspace(min_x, max_x, 500)
-
-        hist, bin_edges = np.histogram(self.obs_zeta, density=False, bins=500)
+        hist, bin_edges = np.histogram(self.obs_zetas, density=False, bins=500)
         bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
 
-        plt.plot(x_range, self.gaussian(x_range))
+        plt.plot(self.window_range, self.gaussian(self.window_range))
         plt.hist(bin_centres, len(bin_centres), weights=hist, alpha=0.4,
                  color=plt.gca().lines[-1].get_color())
 
         plt.xlabel('Reaction coordinate / Å')
         plt.ylabel('Frequency')
+
         plt.tight_layout()
-        plt.savefig('fitted_data.pdf')
+        plt.savefig(filename)
 
         return None
+
+    def _get_fractional_data(self):
+        """Returns a list of the window data in 10% cumulative amounts"""
+
+        data_intervals = np.linspace(self.traj_len / 10,
+                                     self.traj_len, 10,
+                                     dtype=int)
+
+        return [self.obs_zetas[:frac] for frac in data_intervals]
+
+    def convergence_of_gaussian(self):
+        """
+        Tests the convergence of the (a,b,c) parameters of the Gaussian and
+        the convergence of the bin heights to the Gaussian values
+        """
+        gaussian = _Gaussian()
+        data = self._get_fractional_data()
+
+        plt.close()
+
+        b_params, c_params = [], []
+        for subdata in data:
+
+            gaussian.fit_gaussian(subdata)
+            b_params.append(gaussian.params[1])
+            c_params.append(gaussian.params[2])
+
+            plt.plot(self.window_range, gaussian(self.window_range))
+
+        self.plot_data(filename='param_conv.pdf')
+
+        plt.close()
+        plt.plot(np.linspace(0, 1, 10), b_params)
+        plt.plot(np.linspace(0, 1, 10), c_params)
+        plt.savefig('tmp.pdf')
+
+        # take the difference between a point and the previous point and
+        # see if the difference is small enough (threshold) and thus converged
+
+        return NotImplementedError
+
+    def convergence_of_bins(self):
+        """Tests the convergence of the bin heights relative to previous"""
+
+        # autocorrelation function?
+        return NotImplementedError
 
 
 class _Gaussian:
@@ -104,12 +160,12 @@ class _Gaussian:
 
     def __call__(self, x):
         """Returns y-value of Gaussian given input parameters and x-value"""
+
         assert all(self.params)
         return self.value(x, *self.params)
 
     @staticmethod
     def value(x, a, b, c):
-        """Function for the Gaussian"""
         return a * np.exp(-(x - b)**2 / (2. * c**2))
 
     def fit_gaussian(self, data):

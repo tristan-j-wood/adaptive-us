@@ -13,7 +13,7 @@ def test_window():
     assert adaptive.window_num is None
     assert adaptive.ref_zeta is None
     assert adaptive.kappa is None
-    assert adaptive.obs_zeta is None
+    assert adaptive.obs_zetas is None
 
     assert isinstance(adaptive.gaussian, _Gaussian)
 
@@ -27,12 +27,12 @@ def test_window():
     assert type(adaptive.window_num) is int
     assert type(adaptive.kappa) is float
     assert type(adaptive.ref_zeta) is float
-    assert type(adaptive.obs_zeta) is list
-
-    assert all(adaptive.gaussian.params)
+    assert type(adaptive.obs_zetas) is list
 
     # Plotting method should work when data is loaded
     adaptive.plot_data()
+
+    assert all(adaptive.gaussian.params)
     assert os.path.exists('fitted_data.pdf')
 
     with pytest.raises(ValueError):
@@ -51,3 +51,14 @@ def test_gaussian():
 
     # Value of the Gaussian at x = 3 should be the following
     assert np.isclose(adaptive(3), 0.1353352832)
+#
+
+
+def test_convergence():
+
+    adaptive = adp.adaptive.Window()
+    adaptive.load(filename='data.txt')
+
+    adaptive.convergence_of_gaussian()
+
+    assert os.path.exists('param_conv.pdf')
