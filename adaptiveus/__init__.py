@@ -1,6 +1,6 @@
-from adaptiveus.adaptive import Window
+from adaptiveus.adaptive import _Window
 
 __version__ = '1.0.0a1'
 
-__all__ = ['Window'
+__all__ = ['_Window'
            ]
