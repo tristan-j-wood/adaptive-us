@@ -1,8 +1,9 @@
 from adaptiveus.log import logger
 import numpy as np
 from scipy.optimize import curve_fit
-from typing import Optional, List
+from typing import Optional
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FormatStrFormatter
 plt.style.use('paper')
 
 
@@ -24,11 +25,13 @@ class Window:
         self.gaussian = _Gaussian()
 
     @property
-    def traj_len(self):
+    def traj_len(self) -> int:
+        """Number of sampled points in the window trajectory"""
         return len(self.obs_zetas)
 
     @property
-    def window_range(self):
+    def window_range(self) -> np.ndarray:
+        """An extended array of the window range for plotting"""
         min_x = min(self.obs_zetas) * 0.9
         max_x = max(self.obs_zetas) * 1.1
 
@@ -91,7 +94,7 @@ class Window:
         """Returns a list of the window data in 10% cumulative amounts"""
 
         data_intervals = np.linspace(self.traj_len / 10,
-                                     self.traj_len, 10,
+                                     self.traj_len, 9,
                                      dtype=int)
 
         return [self.obs_zetas[:frac] for frac in data_intervals]
@@ -111,16 +114,44 @@ class Window:
 
             gaussian.fit_gaussian(subdata)
             b_params.append(gaussian.params[1])
-            c_params.append(gaussian.params[2])
+            c_params.append(abs(gaussian.params[2]))
 
             plt.plot(self.window_range, gaussian(self.window_range))
 
-        self.plot_data(filename='param_conv.pdf')
+        self.plot_data(filename='gaussian_conv.pdf')
 
         plt.close()
-        plt.plot(np.linspace(0, 1, 10), b_params)
-        plt.plot(np.linspace(0, 1, 10), c_params)
-        plt.savefig('tmp.pdf')
+
+        fig, ax = plt.subplots()
+        twin = ax.twinx()
+
+        b_param_plt = ax.plot(np.linspace(0.1, 1, 9), b_params, linestyle='--',
+                              markersize=7, marker='o', mfc='white',
+                              color='k', label='Mean')
+        c_param_plt = twin.plot(np.linspace(0.1, 1, 9), c_params, linestyle='--',
+                                markersize=7, marker='o', mfc='white',
+                                color='b', label='Standard deviation')
+
+        lines = b_param_plt + c_param_plt
+        labels = [label.get_label() for label in lines]
+        ax.legend(lines, labels, loc='best')
+
+        ax.set_xlabel('Fraction of window trajectory')
+        ax.set_ylabel('Mean / Å')
+        ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        b_min, b_max = min(b_params), max(b_params)
+        ax.set_xlim(0)
+        ax.set_ylim(b_min-0.1*b_min, b_max+0.1*b_max)
+
+        twin.set_ylabel('Standard deviation / Å')
+        twin.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+
+        c_min, c_max = min(c_params), max(c_params)
+        twin.set_ylim(c_min-0.1*c_min, c_max+0.1*c_max)
+
+        plt.tight_layout()
+        plt.savefig('param_conv.pdf')
 
         # take the difference between a point and the previous point and
         # see if the difference is small enough (threshold) and thus converged
