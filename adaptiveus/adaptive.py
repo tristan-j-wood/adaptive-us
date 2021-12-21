@@ -17,7 +17,6 @@ class Windows(list):
     def __add__(self,
                 other: 'adaptiveus.adaptive._Window'):
         """Add a window to the collective windows """
-
         self.append(other)
 
         return self
@@ -94,8 +93,14 @@ class Windows(list):
 
         if indexes is not None:
             selected_windows = [self[i] for i in indexes]
+            file_ext = '_'.join(str(index) for index in indexes)
+            filename = f'window_histogram_{file_ext}.pdf'
         else:
             selected_windows = self
+            filename = f'window_histogram.pdf'
+
+        if not len(selected_windows):
+            raise ValueError("No windows to plot")
 
         for window in selected_windows:
             if window.obs_zetas is None:
@@ -114,7 +119,7 @@ class Windows(list):
         plt.ylabel('Frequency')
 
         plt.tight_layout()
-        plt.savefig(f'all_windows.pdf')
+        plt.savefig(filename)
         plt.close()
 
         return None
@@ -244,7 +249,7 @@ class _Window:
 
         return 100.0
 
-    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> None:
+    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> bool:
         """
         Have the a,b,c parameters of the Gaussian and the bin heights to the
         Gaussian values converged? Converged if difference between current
@@ -271,7 +276,10 @@ class _Window:
         logger.info(f'Mean converged {b_conv}% into the window')
         logger.info(f'Standard deviation converged {c_conv}% into the window')
 
-        return None
+        if b_conv < 100 and c_conv < 100:
+            return True
+        else:
+            return False
 
     def bins_converged(self):
         """Tests the convergence of the bin heights relative to previous

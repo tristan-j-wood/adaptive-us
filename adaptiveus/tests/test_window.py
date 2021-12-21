@@ -5,60 +5,93 @@ from adaptiveus.adaptive import _Gaussian
 import os
 
 
-def test_window():
+def test_empty_window():
 
-    adaptive = adp.adaptive.Window()
+    adaptive = adp.adaptive.Windows()
+
+    # Window class should contain no windows
+    assert not len(adaptive)
+
+    with pytest.raises(ValueError):
+        adaptive.plot_histogram()
+
+    # Add empty window to Windows
+    tmp_window = adp.adaptive._Window()
+    adaptive = adaptive + tmp_window
+
+    assert len(adaptive)
+
+    with pytest.raises(ValueError):
+        adaptive.plot_histogram()
 
     # All attributes should be None when no data is loaded
-    assert adaptive.window_num is None
-    assert adaptive.ref_zeta is None
-    assert adaptive.kappa is None
-    assert adaptive.obs_zetas is None
+    for window in adaptive:
+        assert window.window_n is None
+        assert window.zeta_ref is None
+        assert window.kappa is None
+        assert window.obs_zetas is None
 
-    assert isinstance(adaptive.gaussian, _Gaussian)
+        assert isinstance(window.gaussian, _Gaussian)
 
-    # Plotting method should raise exception when no data is loaded
-    with pytest.raises(ValueError):
-        adaptive.plot_data()
 
-    adaptive.load(filename='data.txt')
+def test_loaded_window():
 
-    # All attributes should not be None when data is loaded
-    assert type(adaptive.window_num) is int
-    assert type(adaptive.kappa) is float
-    assert type(adaptive.ref_zeta) is float
-    assert type(adaptive.obs_zetas) is list
+    adaptive = adp.adaptive.Windows()
+    [adaptive.load(f'data_{i}.txt') for i in range(2)]
 
-    # Plotting method should work when data is loaded
-    adaptive.plot_data()
+    # Gaussians are not fitted until requested so all parameters are None
+    for window in adaptive:
+        assert not all(window.gaussian.params)
 
-    assert all(adaptive.gaussian.params)
-    assert os.path.exists('fitted_data.pdf')
+    # All windows should be plotted
+    adaptive.plot_histogram()
+    assert os.path.exists('window_histogram.pdf')
 
+    # Only the first window should be plotted
+    adaptive.plot_histogram(indexes=[0])
+    assert os.path.exists('window_histogram_0.pdf')
+
+    # IndexError raised if indices are specified which are not in Windows
+    with pytest.raises(IndexError):
+        adaptive.plot_histogram(indexes=[1, 2])
+
+    # Incorrectly formatted files should raise a ValueError
+    adaptive = adp.adaptive.Windows()
     with pytest.raises(ValueError):
         adaptive.load(filename='bad_data.txt')
 
 
 def test_gaussian():
 
-    adaptive = adp.adaptive._Gaussian()
-    assert not all(adaptive.params)
+    adaptive = adp.adaptive.Windows()
+    adaptive.load(f'data_0.txt')
 
-    adaptive.params = 1, 1, 1
+    window = adaptive[0]
+    assert not all(window.gaussian.params)
+
+    window.gaussian.params = 1, 1, 1
 
     # Area of this Gaussian should be √(2π)
-    assert np.isclose(np.sqrt(2*np.pi), adaptive.area)
+    assert np.isclose(np.sqrt(2*np.pi), window.gaussian.area)
 
     # Value of the Gaussian at x = 3 should be the following
-    assert np.isclose(adaptive(3), 0.1353352832)
-#
+    assert np.isclose(window.gaussian(3), 0.1353352832)
 
 
 def test_convergence():
 
-    adaptive = adp.adaptive.Window()
-    adaptive.load(filename='data.txt')
+    adaptive = adp.adaptive.Windows()
+    adaptive.load(f'data_0.txt')
+    window = adaptive[0]
 
-    adaptive.convergence_of_gaussian()
+    window.gaussian_converged()
+    assert os.path.exists(f'param_conv_6.pdf')
+    assert os.path.exists(f'gaussian_conv_6.pdf')
 
-    assert os.path.exists('param_conv.pdf')
+    # Parameters should not converge with an impossible threshold
+    converged = window.gaussian_converged(b_threshold=0, c_threshold=0)
+    assert not converged
+
+    # Parameters should converged with an excess threshold
+    converged = window.gaussian_converged(b_threshold=1000, c_threshold=1000)
+    assert converged
