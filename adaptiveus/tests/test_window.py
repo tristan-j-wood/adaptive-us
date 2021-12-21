@@ -37,7 +37,7 @@ def test_empty_window():
 def test_loaded_window():
 
     adaptive = adp.adaptive.Windows()
-    [adaptive.load(f'data_{i}.txt') for i in range(2)]
+    [adaptive.load(f'data_{i}.txt') for i in range(4)]
 
     # Gaussians are not fitted until requested so all parameters are None
     for window in adaptive:
@@ -47,13 +47,13 @@ def test_loaded_window():
     adaptive.plot_histogram()
     assert os.path.exists('window_histogram.pdf')
 
-    # Only the first window should be plotted
+    # Only window 6 should be plotted (which is the first loaded window)
     adaptive.plot_histogram(indexes=[0])
-    assert os.path.exists('window_histogram_0.pdf')
+    assert os.path.exists('window_histogram_6.pdf')
 
     # IndexError raised if indices are specified which are not in Windows
     with pytest.raises(IndexError):
-        adaptive.plot_histogram(indexes=[1, 2])
+        adaptive.plot_histogram(indexes=[1, 6])
 
     # Incorrectly formatted files should raise a ValueError
     adaptive = adp.adaptive.Windows()
@@ -69,6 +69,11 @@ def test_gaussian():
     window = adaptive[0]
     assert not all(window.gaussian.params)
 
+    # Fit a Gaussian to the real data
+    window.fit_gaussian()
+    assert all(window.gaussian.params)
+
+    # Set up a toy Gaussian
     window.gaussian.params = 1, 1, 1
 
     # Area of this Gaussian should be √(2π)

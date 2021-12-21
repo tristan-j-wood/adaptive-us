@@ -76,24 +76,44 @@ class Windows(list):
 
         return np.array([w_k.zeta_ref for w_k in self])
 
-    def calculate_overlap(self, idx_1, idx_2) -> float:
+    def calculate_overlap(self, indexes) -> float:
         """
-        Calculates the overlap between two specified windows.
-        Returns the minimum overlap of both normalised overlaps.
-        Not implemented yet
+        Calculates the overlap between two specified windows. Returns the
+        minimum overlap of both normalised overlaps.
         """
 
-        overlap = Overlap()
-        overlaps = overlap.calc_overlap(self[idx_1], self[idx_2])
+        [self[i].fit_gaussian() for i in indexes]
 
-        return min(overlaps)
+        overlap = Overlap(self[indexes[0]].gaussian.params,
+                          self[indexes[1]].gaussian.params)
+
+        overlaps = overlap.calculate_overlap()
+
+        # Need to organise how I am saving the overlaps
+        [self[i].overlaps.append(overlaps[0]) for i in indexes]
+
+        return overlaps
+
+    def plot_overlaps(self):
+        """Plots the overlap as a function of ?mean and window number"""
+
+        overlaps = [window.overlaps for window in self]
+        print(overlaps)
+
+        # Plotting needs fixing
+        x_vals = [self[i].window_n for i in range(len(self))]
+        y_vals = [overlaps[i][0] for i in range(len(self))]
+
+        plt.scatter(x_vals, y_vals)
+        plt.savefig('tmp.pdf')
+        plt.close()
 
     def plot_histogram(self, indexes=None) -> None:
         """Plots the histogram data and fitted Gaussian for a n windows"""
 
         if indexes is not None:
             selected_windows = [self[i] for i in indexes]
-            file_ext = '_'.join(str(index) for index in indexes)
+            file_ext = '_'.join(str(self[i].window_n) for i in indexes)
             filename = f'window_histogram_{file_ext}.pdf'
         else:
             selected_windows = self
@@ -106,7 +126,7 @@ class Windows(list):
             if window.obs_zetas is None:
                 raise ValueError("Observed zetas are None. Is the data loaded?")
 
-            window.gaussian.fit_gaussian(window.obs_zetas)
+            window.fit_gaussian()
 
             hist, bin_edges = np.histogram(window.obs_zetas, bins=500)
             bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
@@ -154,6 +174,8 @@ class _Window:
         self.obs_zetas:  Optional[list] = None
         self.gaussian = _Gaussian()
 
+        self.overlaps = []
+
     def __str__(self):
         return f'window_{self.window_n}'
 
@@ -168,6 +190,14 @@ class _Window:
         max_x = max(self.obs_zetas) * 1.1
 
         return np.linspace(min_x, max_x, 500)
+
+    def fit_gaussian(self):
+        """Fits Gaussian parameters to the window data"""
+
+        assert self.obs_zetas is not None
+        self.gaussian.fit_gaussian(self.obs_zetas)
+
+        return None
 
     def _get_fractional_data(self):
         """Returns a list of the window data in 10% cumulative amounts"""
@@ -276,7 +306,7 @@ class _Window:
         logger.info(f'Mean converged {b_conv}% into the window')
         logger.info(f'Standard deviation converged {c_conv}% into the window')
 
-        if b_conv < 100 and c_conv < 100:
+        if b_conv < 100.0 and c_conv < 100.0:
             return True
         else:
             return False
@@ -310,7 +340,7 @@ class _Gaussian:
         I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
         """
         assert all(self.params)
-        return self.params[0] * self.params[1] * (2 * np.pi)**0.5
+        return self.params[0] * self.params[2] * (2 * np.pi)**0.5
 
     def __call__(self, x):
         """Returns y-value of Gaussian given input parameters and x-value"""
@@ -333,6 +363,8 @@ class _Gaussian:
             self.params, _ = curve_fit(self.value, bin_centres, hist,
                                        p0=initial_guess,
                                        maxfev=10000)
+            self.params[2] = abs(self.params[2])
+
         except RuntimeError:
             logger.error('Failed to fit a gaussian to this data')
 
