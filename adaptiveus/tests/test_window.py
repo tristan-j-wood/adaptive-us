@@ -3,6 +3,8 @@ import pytest
 import adaptiveus as adp
 from adaptiveus.adaptive import _Gaussian
 import os
+from adaptiveus.utils import work_in_zipped_dir
+here = os.path.abspath(os.path.dirname(__file__))
 
 
 def test_empty_window():
@@ -16,8 +18,8 @@ def test_empty_window():
         adaptive.plot_histogram()
 
     # Add empty window to Windows
-    tmp_window = adp.adaptive._Window()
-    adaptive = adaptive + tmp_window
+    tmp_window = adp.adaptive.Window()
+    adaptive.append(tmp_window)
 
     assert len(adaptive)
 
@@ -29,11 +31,12 @@ def test_empty_window():
         assert window.window_n is None
         assert window.zeta_ref is None
         assert window.kappa is None
-        assert window.obs_zetas is None
+        assert not len(window.obs_zetas)
 
         assert isinstance(window.gaussian, _Gaussian)
 
 
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_loaded_window():
 
     adaptive = adp.adaptive.Windows()
@@ -49,7 +52,7 @@ def test_loaded_window():
 
     # Only window 6 should be plotted (which is the first loaded window)
     adaptive.plot_histogram(indexes=[0])
-    assert os.path.exists('window_histogram_6.pdf')
+    assert os.path.exists('window_histogram_5.pdf')
 
     # IndexError raised if indices are specified which are not in Windows
     with pytest.raises(IndexError):
@@ -61,6 +64,7 @@ def test_loaded_window():
         adaptive.load(filename='bad_data.txt')
 
 
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_gaussian():
 
     adaptive = adp.adaptive.Windows()
@@ -83,6 +87,7 @@ def test_gaussian():
     assert np.isclose(window.gaussian(3), 0.1353352832)
 
 
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_convergence():
 
     adaptive = adp.adaptive.Windows()
@@ -90,8 +95,8 @@ def test_convergence():
     window = adaptive[0]
 
     window.gaussian_converged()
-    assert os.path.exists(f'param_conv_6.pdf')
-    assert os.path.exists(f'gaussian_conv_6.pdf')
+    assert os.path.exists(f'param_conv_5.pdf')
+    assert os.path.exists(f'gaussian_conv_5.pdf')
 
     # Parameters should not converge with an impossible threshold
     converged = window.gaussian_converged(b_threshold=0, c_threshold=0)

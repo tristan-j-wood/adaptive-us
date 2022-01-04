@@ -1,9 +1,10 @@
+import numpy as np
+import matplotlib.pyplot as plt
 from adaptiveus.log import logger
 from adaptiveus.overlap import Overlap
-import numpy as np
 from scipy.optimize import curve_fit
 from typing import Optional
-import matplotlib.pyplot as plt
+
 plt.style.use('paper')
 
 
@@ -14,17 +15,15 @@ class Windows(list):
         """Collection of all the windows from an US simulation"""
         super().__init__()
 
-    def __add__(self,
-                other: 'adaptiveus.adaptive._Window'):
-        """Add a window to the collective windows """
-        self.append(other)
-
-        return self
-
     def load(self, filename: str) -> None:
         """
         Load sampled reaction coordinates from a .txt file, with the first
-        line containing the window number, reference and kappa, respectively
+        line containing the window number, reference and kappa, respectively.
+
+        E.g., 5 2.500 10.00
+              2.4615
+              2.4673
+              ...
 
         -----------------------------------------------------------------------
         Arguments:
@@ -46,17 +45,15 @@ class Windows(list):
                 raise ValueError("First line must contain window number, "
                                  "reference and kappa")
 
-            window = _Window(window_n=int(header_line.split()[0]),
-                             zeta_ref=float(header_line.split()[1]),
-                             kappa=float(header_line.split()[2]))
+            window = Window(window_n=int(header_line.split()[0]),
+                            zeta_ref=float(header_line.split()[1]),
+                            kappa=float(header_line.split()[2]))
 
-            try:
-                window.obs_zetas = [float(line) for line in file_lines]
-
-            except ValueError:
-                logger.error(
-                    "Could not convert file zetas into floats. Is the "
-                    "format in the file correct?")
+            for idx, line in enumerate(file_lines):
+                try:
+                    window.obs_zetas.append(float(line))
+                except ValueError:
+                    raise ValueError(f'Could not convert line {idx}:\n {line}')
 
         self.append(window)
 
@@ -90,11 +87,13 @@ class Windows(list):
         overlaps = overlap.calculate_overlap()
 
         # Need to organise how I am saving the overlaps
+        # This method should return an Overlap instance and calc_overlap
+        # should update this instance and not return anything
         [self[i].overlaps.append(overlaps[0]) for i in indexes]
 
         return overlaps
 
-    def plot_overlaps(self):
+    def plot_overlaps(self) -> None:
         """Plots the overlap as a function of ?mean and window number"""
 
         overlaps = [window.overlaps for window in self]
@@ -104,12 +103,21 @@ class Windows(list):
         x_vals = [self[i].window_n for i in range(len(self))]
         y_vals = [overlaps[i][0] for i in range(len(self))]
 
-        plt.scatter(x_vals, y_vals)
+        plt.scatter(x_vals, y_vals, marker='o', color='b')
+        plt.xlabel('Window index')
+        plt.ylabel('Normalised overlap')
+        plt.ylim(0, 1)
         plt.savefig('tmp.pdf')
         plt.close()
 
+        return None
+
     def plot_histogram(self, indexes=None) -> None:
-        """Plots the histogram data and fitted Gaussian for a n windows"""
+        """
+        Plots observed reaction coordinates as a histogram for a set of
+        windows. If indexes is specified, only a subset of the windows will
+        be plotted. E.g., indexes=[0, 1] will plot the first and second windows
+        """
 
         if indexes is not None:
             selected_windows = [self[i] for i in indexes]
@@ -132,6 +140,7 @@ class Windows(list):
             bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
 
             plt.plot(window.window_range, window.gaussian(window.window_range))
+            # Color of the fitted Gaussian matches the histogram color
             plt.hist(bin_centres, len(bin_centres), weights=hist, alpha=0.4,
                      color=plt.gca().lines[-1].get_color())
 
@@ -145,7 +154,7 @@ class Windows(list):
         return None
 
 
-class _Window:
+class Window:
     """Data associated with a window from US"""
 
     def __init__(self,
@@ -171,7 +180,7 @@ class _Window:
         self.zeta_ref = zeta_ref
         self.kappa = kappa
 
-        self.obs_zetas:  Optional[list] = None
+        self.obs_zetas:  Optional[list] = []
         self.gaussian = _Gaussian()
 
         self.overlaps = []
@@ -179,7 +188,8 @@ class _Window:
     def __str__(self):
         return f'window_{self.window_n}'
 
-    def __len__(self) -> int:
+    @property
+    def number_of_samples(self) -> int:
         """Number of sampled points in the window trajectory"""
         return len(self.obs_zetas)
 
@@ -191,19 +201,24 @@ class _Window:
 
         return np.linspace(min_x, max_x, 500)
 
-    def fit_gaussian(self):
+    def fit_gaussian(self) -> None:
         """Fits Gaussian parameters to the window data"""
 
         assert self.obs_zetas is not None
-        self.gaussian.fit_gaussian(self.obs_zetas)
+        self.gaussian.fit(self.obs_zetas)
 
         return None
 
-    def _get_fractional_data(self):
+    def _get_fractional_data(self) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
 
-        assert self.obs_zetas is not None
-        data_intervals = np.linspace(len(self) / 10, len(self), 10, dtype=int)
+        if self.obs_zetas is None:
+            raise AssertionError('Cannot get a fraction of non existing data. '
+                                 'Please set window.obs_zetas')
+
+        data_intervals = np.linspace(self.number_of_samples / 10,
+                                     self.number_of_samples, 10,
+                                     dtype=int)
 
         return [self.obs_zetas[:frac] for frac in data_intervals]
 
@@ -234,38 +249,38 @@ class _Window:
     def _plot_param_convergence(self, b_data, c_data):
         """Plots the mean and standard deviation as a fraction of the traj"""
 
-        fig, ax = plt.subplots()
-        twin = ax.twinx()
+        fig, ax1 = plt.subplots()
+        ax2 = ax1.twinx()
 
-        b_param_plt = ax.plot(np.linspace(0.1, 1, 10), b_data,
-                              linestyle='--', markersize=7, marker='o',
-                              mfc='white', color='k', label='Mean')
+        b_param_plt = ax1.plot(np.linspace(0.1, 1, 10), b_data,
+                               linestyle='--', markersize=7, marker='o',
+                               mfc='white', color='k', label='Mean')
 
-        c_param_plt = twin.plot(np.linspace(0.1, 1, 10), c_data,
-                                linestyle='--', markersize=7, marker='o',
-                                mfc='white', color='b',
-                                label='Standard deviation')
+        c_param_plt = ax2.plot(np.linspace(0.1, 1, 10), c_data,
+                               linestyle='--', markersize=7, marker='o',
+                               mfc='white', color='b',
+                               label='Standard deviation')
 
         lines = b_param_plt + c_param_plt
         labels = [label.get_label() for label in lines]
-        ax.legend(lines, labels, loc='best')
+        ax1.legend(lines, labels, loc='best')
 
-        ax.set_xlabel('Fraction of window trajectory')
-        ax.set_ylabel('Mean / Å')
-        ax.set_xlim(0)
-        ax.set_ylim(min(b_data) - 0.1 * min(b_data),
-                    max(b_data) + 0.1 * max(b_data))
+        ax1.set_xlabel('Fraction of window trajectory')
+        ax1.set_ylabel('Mean / Å')
+        ax1.set_xlim(0)
+        ax1.set_ylim(min(b_data) - 0.1 * min(b_data),
+                     max(b_data) + 0.1 * max(b_data))
 
-        twin.set_ylabel('Standard deviation / Å')
-        twin.set_ylim(min(c_data) - 0.1 * min(c_data),
-                      max(c_data) + 0.1 * max(c_data))
+        ax2.set_ylabel('Standard deviation / Å')
+        ax2.set_ylim(min(c_data) - 0.1 * min(c_data),
+                     max(c_data) + 0.1 * max(c_data))
 
         plt.tight_layout()
         plt.savefig(f'param_conv_{self.window_n}.pdf')
         plt.close()
 
     @staticmethod
-    def _parameter_converged(param, threshold) -> float:
+    def _parameter_percentage_converged(param, threshold) -> float:
         """Returns the percentage at which the parameters converged"""
 
         p_prev = param[0]
@@ -291,7 +306,7 @@ class _Window:
         for i, subdata in enumerate(data):
 
             gaussian = _Gaussian()
-            gaussian.fit_gaussian(subdata)
+            gaussian.fit(subdata)
             gaussians.append(gaussian)
 
             b_params.append(gaussian.params[1])
@@ -300,8 +315,8 @@ class _Window:
         self._plot_gaussian_convergence(gaussians)
         self._plot_param_convergence(b_params, c_params)
 
-        b_conv = self._parameter_converged(b_params, b_threshold)
-        c_conv = self._parameter_converged(c_params, c_threshold)
+        b_conv = self._parameter_percentage_converged(b_params, b_threshold)
+        c_conv = self._parameter_percentage_converged(c_params, c_threshold)
 
         logger.info(f'Mean converged {b_conv}% into the window')
         logger.info(f'Standard deviation converged {c_conv}% into the window')
@@ -322,9 +337,9 @@ class _Gaussian:
     """Gaussian function fit to a set of data"""
 
     def __init__(self,
-                 a: float = None,
-                 b: float = None,
-                 c: float = None):
+                 a: Optional[float] = None,
+                 b: Optional[float] = None,
+                 c: Optional[float] = None):
         """
         Gaussian parameterised by a, b and c constants:
 
@@ -333,7 +348,7 @@ class _Gaussian:
         self.params = a, b, c
 
     @property
-    def area(self):
+    def area(self) -> float:
         """
         Returns integral of Gaussian between -∞ and ∞:
 
@@ -352,7 +367,7 @@ class _Gaussian:
     def value(x, a, b, c):
         return a * np.exp(-(x - b)**2 / (2. * c**2))
 
-    def fit_gaussian(self, data):
+    def fit(self, data) -> None:
         """Fit a Gaussian to a set of data"""
 
         hist, bin_edges = np.histogram(data, density=False, bins=500)

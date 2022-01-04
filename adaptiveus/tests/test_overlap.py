@@ -1,6 +1,10 @@
 import adaptiveus as adp
+from adaptiveus.utils import work_in_zipped_dir
+import os
+here = os.path.abspath(os.path.dirname(__file__))
 
 
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_get_params():
 
     windows = adp.adaptive.Windows()
