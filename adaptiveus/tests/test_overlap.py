@@ -4,7 +4,7 @@ import os
 here = os.path.abspath(os.path.dirname(__file__))
 
 
-@work_in_zipped_dir(os.path.join(here, 'data.zip'))
+# @work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_get_params():
 
     windows = adp.adaptive.Windows()
@@ -15,9 +15,9 @@ def test_get_params():
     windows.load(filename='data_3.txt')
 
     # How to choose between window number and index?
-    windows.calculate_overlap(indexes=[0, 1])
-    windows.calculate_overlap(indexes=[1, 2])
-    windows.calculate_overlap(indexes=[2, 3])
+    windows.calculate_overlap(indexes=[3, 4])
+    windows.calculate_overlap(indexes=[4, 5])
+    windows.calculate_overlap(indexes=[5, 6])
     windows.plot_overlaps()
 
     params_1 = 1, 1, 1

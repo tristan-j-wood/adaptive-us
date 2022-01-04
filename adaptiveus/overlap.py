@@ -88,7 +88,6 @@ class Overlap:
 
         if all(np.isreal(roots)):
             integral = self._calculate_integral(roots)
-            print(integral)
 
             norm_overlap_1 = integral / area_1
             norm_overlap_2 = integral / area_2

@@ -73,40 +73,60 @@ class Windows(list):
 
         return np.array([w_k.zeta_ref for w_k in self])
 
-    def calculate_overlap(self, indexes) -> float:
+    def _get_fitted_window_from_index(self, idx):
+        """
+        Returns the window associated with the specified index and fits a
+        Gaussian to this window data
+        """
+
+        try:
+            window = next(window for window in self if window.window_n == idx)
+
+        except StopIteration:
+            raise StopIteration(f"No window {idx} loaded")
+
+        window.fit_gaussian()
+
+        return window
+
+    def calculate_overlap(self, indexes) -> None:
         """
         Calculates the overlap between two specified windows. Returns the
         minimum overlap of both normalised overlaps.
         """
 
-        [self[i].fit_gaussian() for i in indexes]
+        window_a = self._get_fitted_window_from_index(indexes[0])
+        window_b = self._get_fitted_window_from_index(indexes[1])
 
-        overlap = Overlap(self[indexes[0]].gaussian.params,
-                          self[indexes[1]].gaussian.params)
-
+        overlap = Overlap(window_a.gaussian.params, window_b.gaussian.params)
         overlaps = overlap.calculate_overlap()
 
-        # Need to organise how I am saving the overlaps
         # This method should return an Overlap instance and calc_overlap
         # should update this instance and not return anything
-        [self[i].overlaps.append(overlaps[0]) for i in indexes]
+        window_a.overlaps[1] = overlaps[0]
+        window_b.overlaps[0] = overlaps[1]
 
-        return overlaps
+        return None
 
     def plot_overlaps(self) -> None:
         """Plots the overlap as a function of ?mean and window number"""
 
         overlaps = [window.overlaps for window in self]
-        print(overlaps)
+        x_vals = [window.window_n for window in self]
 
-        # Plotting needs fixing
-        x_vals = [self[i].window_n for i in range(len(self))]
-        y_vals = [overlaps[i][0] for i in range(len(self))]
+        lhs_overlap = [overlaps[i][0] for i in range(len(self))]
+        rhs_overlap = [overlaps[i][1] for i in range(len(self))]
 
-        plt.scatter(x_vals, y_vals, marker='o', color='b')
+        plt.scatter(x_vals, rhs_overlap, marker='o', color='r',
+                    label='RHS Overlap')
+        plt.scatter(x_vals, lhs_overlap, marker='o', color='b',
+                    label='LHS Overlap')
+
         plt.xlabel('Window index')
         plt.ylabel('Normalised overlap')
         plt.ylim(0, 1)
+        plt.legend()
+
         plt.savefig('tmp.pdf')
         plt.close()
 
@@ -183,7 +203,7 @@ class Window:
         self.obs_zetas:  Optional[list] = []
         self.gaussian = _Gaussian()
 
-        self.overlaps = []
+        self.overlaps = [None, None]
 
     def __str__(self):
         return f'window_{self.window_n}'
