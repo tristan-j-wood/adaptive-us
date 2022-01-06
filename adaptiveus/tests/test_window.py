@@ -52,7 +52,7 @@ def test_loaded_window():
 
     # Only window 6 should be plotted (which is the first loaded window)
     adaptive.plot_histogram(indexes=[0])
-    assert os.path.exists('window_histogram_5.pdf')
+    assert os.path.exists('window_histogram_3.pdf')
 
     # IndexError raised if indices are specified which are not in Windows
     with pytest.raises(IndexError):
@@ -95,13 +95,34 @@ def test_convergence():
     window = adaptive[0]
 
     window.gaussian_converged()
-    assert os.path.exists(f'param_conv_5.pdf')
-    assert os.path.exists(f'gaussian_conv_5.pdf')
+    assert os.path.exists(f'param_conv_3.pdf')
+    assert os.path.exists(f'gaussian_conv_3.pdf')
 
     # Parameters should not converge with an impossible threshold
     converged = window.gaussian_converged(b_threshold=0, c_threshold=0)
-    assert not converged
+    assert not all(converged)
 
     # Parameters should converged with an excess threshold
     converged = window.gaussian_converged(b_threshold=1000, c_threshold=1000)
-    assert converged
+    assert all(converged)
+
+
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
+def test_discrepancy():
+
+    adaptive = adp.adaptive.Windows()
+    adaptive.load(filename='data_0.txt')
+    adaptive.load(filename='data_1.txt')
+    adaptive.load(filename='data_2.txt')
+    adaptive.load(filename='data_3.txt')
+
+    # Plotting should fail if discprepancy hasn't been calculated
+    with pytest.raises(AssertionError):
+        adaptive.plot_discrepancy()
+
+    adaptive.calculate_discrepancy(idx=3)
+    adaptive.calculate_discrepancy(idx=4)
+    adaptive.calculate_discrepancy(idx=5)
+    adaptive.calculate_discrepancy(idx=6)
+
+    adaptive.plot_discrepancy()

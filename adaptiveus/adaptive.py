@@ -1,11 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from adaptiveus.log import logger
-from adaptiveus.overlap import Overlap
 from scipy.optimize import curve_fit
 from typing import Optional
-
-plt.style.use('paper')
+if 'paper' in plt.style.available:
+    plt.style.use('paper')
 
 
 class Windows(list):
@@ -81,9 +80,8 @@ class Windows(list):
 
         try:
             window = next(window for window in self if window.window_n == idx)
-
         except StopIteration:
-            raise StopIteration(f"No window {idx} loaded")
+            raise StopIteration(f"Window {idx} not loaded")
 
         window.fit_gaussian()
 
@@ -101,15 +99,18 @@ class Windows(list):
         overlap = Overlap(window_a.gaussian.params, window_b.gaussian.params)
         overlaps = overlap.calculate_overlap()
 
-        # This method should return an Overlap instance and calc_overlap
-        # should update this instance and not return anything
         window_a.overlaps[1] = overlaps[0]
         window_b.overlaps[0] = overlaps[1]
 
-        return None
+        return NotImplementedError
 
     def plot_overlaps(self) -> None:
-        """Plots the overlap as a function of ?mean and window number"""
+        """Plots the overlap as a function of window number"""
+
+        # Needs a test
+        if not any([window.overlaps for window in self]):
+            raise AssertionError('Cannot plot overlaps. '
+                                 'Please set window.overlaps')
 
         overlaps = [window.overlaps for window in self]
         x_vals = [window.window_n for window in self]
@@ -117,20 +118,56 @@ class Windows(list):
         lhs_overlap = [overlaps[i][0] for i in range(len(self))]
         rhs_overlap = [overlaps[i][1] for i in range(len(self))]
 
-        plt.scatter(x_vals, rhs_overlap, marker='o', color='r',
-                    label='RHS Overlap')
-        plt.scatter(x_vals, lhs_overlap, marker='o', color='b',
-                    label='LHS Overlap')
+        plt.plot(x_vals, rhs_overlap, marker='o', color='r', linestyle='--',
+                 markersize=7, mfc='white', label='RHS Overlap')
+        plt.plot(x_vals, lhs_overlap, marker='o', color='b', linestyle='--',
+                 markersize=7, mfc='white', label='LHS Overlap')
+
+        plt.axhline(0.3, linestyle='dotted', label='Threshold', color='k',
+                    alpha=0.8)
 
         plt.xlabel('Window index')
         plt.ylabel('Normalised overlap')
         plt.ylim(0, 1)
         plt.legend()
 
-        plt.savefig('tmp.pdf')
+        plt.savefig('overlap.pdf')
         plt.close()
 
+        return NotImplementedError
+
+    def calculate_discrepancy(self, idx) -> None:
+        """
+        Calculates and sets the discrepancy for a specified window.
+        D = |mean - ref|
+        """
+
+        window = self._get_fitted_window_from_index(idx)
+        window.discrepancy = abs(window.gaussian.params[1] - window.zeta_ref)
+
         return None
+
+    def plot_discrepancy(self):
+        """Plots the discrepancy (D = |mean - ref|) for all windows"""
+
+        if not any([window.discrepancy for window in self]):
+            raise AssertionError('Cannot plot discrepancies. '
+                                 'Please set window.discrepancy')
+
+        discrepancies = [window.discrepancy for window in self]
+        x_vals = [window.window_n for window in self]
+
+        plt.plot(x_vals, discrepancies, marker='o', color='k', linestyle='--',
+                 markersize=7, mfc='white')
+
+        plt.xlabel('Window index')
+        plt.ylabel('Discrepancy / Å')
+        plt.ylim(0, 0.1)
+
+        plt.savefig('discrepancy.pdf')
+        plt.close()
+
+        return NotImplementedError
 
     def plot_histogram(self, indexes=None) -> None:
         """
@@ -138,6 +175,7 @@ class Windows(list):
         windows. If indexes is specified, only a subset of the windows will
         be plotted. E.g., indexes=[0, 1] will plot the first and second windows
         """
+        plt.close()
 
         if indexes is not None:
             selected_windows = [self[i] for i in indexes]
@@ -147,7 +185,7 @@ class Windows(list):
             selected_windows = self
             filename = f'window_histogram.pdf'
 
-        if not len(selected_windows):
+        if len(selected_windows) == 0:
             raise ValueError("No windows to plot")
 
         for window in selected_windows:
@@ -160,6 +198,7 @@ class Windows(list):
             bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
 
             plt.plot(window.window_range, window.gaussian(window.window_range))
+
             # Color of the fitted Gaussian matches the histogram color
             plt.hist(bin_centres, len(bin_centres), weights=hist, alpha=0.4,
                      color=plt.gca().lines[-1].get_color())
@@ -204,6 +243,7 @@ class Window:
         self.gaussian = _Gaussian()
 
         self.overlaps = [None, None]
+        self.discrepancy = None
 
     def __str__(self):
         return f'window_{self.window_n}'
@@ -288,63 +328,63 @@ class Window:
         ax1.set_xlabel('Fraction of window trajectory')
         ax1.set_ylabel('Mean / Å')
         ax1.set_xlim(0)
-        ax1.set_ylim(min(b_data) - 0.1 * min(b_data),
-                     max(b_data) + 0.1 * max(b_data))
+        # ax1.set_ylim(min(b_data) - 0.1 * min(b_data),
+        #              max(b_data) + 0.1 * max(b_data))
 
         ax2.set_ylabel('Standard deviation / Å')
-        ax2.set_ylim(min(c_data) - 0.1 * min(c_data),
-                     max(c_data) + 0.1 * max(c_data))
+        # ax2.set_ylim(min(c_data) - 0.1 * min(c_data),
+        #              max(c_data) + 0.1 * max(c_data))
 
         plt.tight_layout()
         plt.savefig(f'param_conv_{self.window_n}.pdf')
         plt.close()
 
-    @staticmethod
-    def _parameter_percentage_converged(param, threshold) -> float:
-        """Returns the percentage at which the parameters converged"""
+    def _gaussian_convergence(self, data) -> list:
+        """Fits and plots Gaussians at fractions of the data"""
 
-        p_prev = param[0]
-        for idx, value in enumerate(param[1:]):
-
-            if abs(value - p_prev) < threshold:
-                return (idx + 2) * 10.0
-
-            else:
-                p_prev = value
-
-        return 100.0
-
-    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> bool:
-        """
-        Have the a,b,c parameters of the Gaussian and the bin heights to the
-        Gaussian values converged? Converged if difference between current
-        value and previous is below a threshold
-        """
-        data = self._get_fractional_data()
-
-        gaussians, b_params, c_params = [], [], []
-        for i, subdata in enumerate(data):
-
+        gaussians = []
+        for subdata in data:
             gaussian = _Gaussian()
             gaussian.fit(subdata)
             gaussians.append(gaussian)
 
-            b_params.append(gaussian.params[1])
-            c_params.append(abs(gaussian.params[2]))
-
         self._plot_gaussian_convergence(gaussians)
+
+        return gaussians
+
+    @staticmethod
+    def _parameter_converged(params, threshold) -> bool:
+        """Tests whether a parameter has converged within a given threshold"""
+
+        b_prev = params[0]
+        for idx, value in enumerate(params[1:]):
+
+            if abs(value - b_prev) < threshold:
+                return True
+            else:
+                b_prev = value
+
+        return False
+
+    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> list:
+        """
+        Returns list of booleans for whether b and c parameters of the
+        Gaussian have converged. Plots b and c parameters along the trajectory
+        """
+        fractional_data = self._get_fractional_data()
+        fractional_gaussians = self._gaussian_convergence(fractional_data)
+
+        b_params = [gaussian.params[1] for gaussian in fractional_gaussians]
+        b_converged = self._parameter_converged(b_params,
+                                                threshold=b_threshold)
+
+        c_params = [gaussian.params[2] for gaussian in fractional_gaussians]
+        c_converged = self._parameter_converged(c_params,
+                                                threshold=c_threshold)
+
         self._plot_param_convergence(b_params, c_params)
 
-        b_conv = self._parameter_percentage_converged(b_params, b_threshold)
-        c_conv = self._parameter_percentage_converged(c_params, c_threshold)
-
-        logger.info(f'Mean converged {b_conv}% into the window')
-        logger.info(f'Standard deviation converged {c_conv}% into the window')
-
-        if b_conv < 100.0 and c_conv < 100.0:
-            return True
-        else:
-            return False
+        return [b_converged, c_converged]
 
     def bins_converged(self):
         """Tests the convergence of the bin heights relative to previous
@@ -365,6 +405,7 @@ class _Gaussian:
 
         y = a * exp(-(x-b)^2 / (2*c^2))
         """
+
         self.params = a, b, c
 
     @property
@@ -398,6 +439,7 @@ class _Gaussian:
             self.params, _ = curve_fit(self.value, bin_centres, hist,
                                        p0=initial_guess,
                                        maxfev=10000)
+            # c parameter is always non-negative
             self.params[2] = abs(self.params[2])
 
         except RuntimeError:
