@@ -4,10 +4,6 @@ from zipfile import ZipFile
 from functools import wraps
 
 
-def unzip_dir(zip_path):
-    return work_in_zipped_dir(zip_path, chdir=False)
-
-
 def work_in_zipped_dir(zip_path, chdir=True):
     """Extract some data from a compressed folder, change directories to it if
     required, run the function then, if required change directories back out

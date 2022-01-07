@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from adaptiveus.log import logger
 from scipy.optimize import curve_fit
-from typing import Optional
+from typing import Optional, Sequence
 if 'paper' in plt.style.available:
     plt.style.use('paper')
 
@@ -35,24 +35,26 @@ class Windows(list):
         if not filename.endswith('.txt'):
             raise ValueError(f"Cannot load {filename}. Must be an .txt file")
 
-        else:
+        file_lines = open(filename, 'r').readlines()
+        header_line = file_lines.pop(0)
+        header_items = header_line.split()
 
-            file_lines = open(filename, 'r').readlines()
-            header_line = file_lines.pop(0)
+        if len(header_items) != 3:
+            raise ValueError("First line must contain window number, "
+                             "reference and kappa")
 
-            if len(header_line.split()) != 3:
-                raise ValueError("First line must contain window number, "
-                                 "reference and kappa")
+        if int(header_items[0]) in [window.window_n for window in self]:
+            raise ValueError("Identically numbered window trying to be loaded")
 
-            window = Window(window_n=int(header_line.split()[0]),
-                            zeta_ref=float(header_line.split()[1]),
-                            kappa=float(header_line.split()[2]))
+        window = Window(window_n=int(header_items[0]),
+                        zeta_ref=float(header_items[1]),
+                        kappa=float(header_items[2]))
 
-            for idx, line in enumerate(file_lines):
-                try:
-                    window.obs_zetas.append(float(line))
-                except ValueError:
-                    raise ValueError(f'Could not convert line {idx}:\n {line}')
+        for idx, line in enumerate(file_lines):
+            try:
+                window.obs_zetas.append(float(line))
+            except ValueError:
+                raise ValueError(f'Could not convert line {idx}:\n {line}')
 
         self.append(window)
 
@@ -70,7 +72,7 @@ class Windows(list):
         if len(self) == 0:
             return None
 
-        return np.array([w_k.zeta_ref for w_k in self])
+        return np.array([window.zeta_ref for window in self])
 
     def _get_fitted_window_from_index(self, idx):
         """
@@ -87,20 +89,23 @@ class Windows(list):
 
         return window
 
-    def calculate_overlap(self, indexes) -> None:
+    def calculate_overlap(self, idx0: int, idx1: int) -> None:
         """
         Calculates the overlap between two specified windows. Returns the
         minimum overlap of both normalised overlaps.
         """
 
-        window_a = self._get_fitted_window_from_index(indexes[0])
-        window_b = self._get_fitted_window_from_index(indexes[1])
+        window_a = self._get_fitted_window_from_index(idx0)
+        window_b = self._get_fitted_window_from_index(idx1)
 
         overlap = Overlap(window_a.gaussian.params, window_b.gaussian.params)
         overlaps = overlap.calculate_overlap()
 
         window_a.overlaps[1] = overlaps[0]
         window_b.overlaps[0] = overlaps[1]
+
+        # window.overlap.lhs
+        # Turn overlap class into one function in overlap.py
 
         return NotImplementedError
 
@@ -115,12 +120,12 @@ class Windows(list):
         overlaps = [window.overlaps for window in self]
         x_vals = [window.window_n for window in self]
 
-        lhs_overlap = [overlaps[i][0] for i in range(len(self))]
-        rhs_overlap = [overlaps[i][1] for i in range(len(self))]
+        lhs_overlaps = [overlaps[i][0] for i in range(len(self))]
+        rhs_overlaps = [overlaps[i][1] for i in range(len(self))]
 
-        plt.plot(x_vals, rhs_overlap, marker='o', color='r', linestyle='--',
+        plt.plot(x_vals, rhs_overlaps, marker='o', color='r', linestyle='--',
                  markersize=7, mfc='white', label='RHS Overlap')
-        plt.plot(x_vals, lhs_overlap, marker='o', color='b', linestyle='--',
+        plt.plot(x_vals, lhs_overlaps, marker='o', color='b', linestyle='--',
                  markersize=7, mfc='white', label='LHS Overlap')
 
         plt.axhline(0.3, linestyle='dotted', label='Threshold', color='k',
@@ -136,23 +141,10 @@ class Windows(list):
 
         return NotImplementedError
 
-    def calculate_discrepancy(self, idx) -> None:
-        """
-        Calculates and sets the discrepancy for a specified window.
-        D = |mean - ref|
-        """
-
-        window = self._get_fitted_window_from_index(idx)
-        window.discrepancy = abs(window.gaussian.params[1] - window.zeta_ref)
-
-        return None
-
-    def plot_discrepancy(self):
+    def plot_discrepancy(self) -> None:
         """Plots the discrepancy (D = |mean - ref|) for all windows"""
-
-        if not any([window.discrepancy for window in self]):
-            raise AssertionError('Cannot plot discrepancies. '
-                                 'Please set window.discrepancy')
+        if len(self) == 0:
+            raise ValueError("No windows are loaded")
 
         discrepancies = [window.discrepancy for window in self]
         x_vals = [window.window_n for window in self]
@@ -167,9 +159,9 @@ class Windows(list):
         plt.savefig('discrepancy.pdf')
         plt.close()
 
-        return NotImplementedError
+        return None
 
-    def plot_histogram(self, indexes=None) -> None:
+    def plot_histogram(self, indexes: Optional[Sequence[int]] = None) -> None:
         """
         Plots observed reaction coordinates as a histogram for a set of
         windows. If indexes is specified, only a subset of the windows will
@@ -182,15 +174,15 @@ class Windows(list):
             file_ext = '_'.join(str(self[i].window_n) for i in indexes)
             filename = f'window_histogram_{file_ext}.pdf'
         else:
-            selected_windows = self
+            selected_windows = list(self)
             filename = f'window_histogram.pdf'
 
         if len(selected_windows) == 0:
             raise ValueError("No windows to plot")
 
         for window in selected_windows:
-            if window.obs_zetas is None:
-                raise ValueError("Observed zetas are None. Is the data loaded?")
+            if len(window.obs_zetas) == 0:
+                raise ValueError("Not observed zetas. Is the data loaded?")
 
             window.fit_gaussian()
 
@@ -243,10 +235,23 @@ class Window:
         self.gaussian = _Gaussian()
 
         self.overlaps = [None, None]
-        self.discrepancy = None
 
     def __str__(self):
         return f'window_{self.window_n}'
+
+    @property
+    def discrepancy(self):
+        """
+        Calculates the discrepancy for current window.
+        D = |mean - ref|
+        """
+        if len(self.obs_zetas) == 0:
+            raise ValueError("Not observed zetas. Is the data loaded?")
+
+        if not all(self.gaussian.params):
+            self.fit_gaussian()
+
+        return abs(self.gaussian.mean - self.zeta_ref)
 
     @property
     def number_of_samples(self) -> int:
@@ -256,15 +261,18 @@ class Window:
     @property
     def window_range(self) -> np.ndarray:
         """An extended array of the window range for plotting"""
-        min_x = min(self.obs_zetas) * 0.9
-        max_x = max(self.obs_zetas) * 1.1
+        x_range = abs(max(self.obs_zetas) - min(self.obs_zetas))
+        min_x = min(self.obs_zetas) - 0.1 * x_range
+        max_x = max(self.obs_zetas) + 0.1 * x_range
 
         return np.linspace(min_x, max_x, 500)
 
     def fit_gaussian(self) -> None:
         """Fits Gaussian parameters to the window data"""
 
-        assert self.obs_zetas is not None
+        if len(self.obs_zetas) == 0:
+            raise ValueError("Not observed zetas. Is the data loaded?")
+
         self.gaussian.fit(self.obs_zetas)
 
         return None
@@ -272,7 +280,7 @@ class Window:
     def _get_fractional_data(self) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
 
-        if self.obs_zetas is None:
+        if len(self.obs_zetas) == 0:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
@@ -312,6 +320,7 @@ class Window:
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
+        # Plot on a log scale?
         b_param_plt = ax1.plot(np.linspace(0.1, 1, 10), b_data,
                                linestyle='--', markersize=7, marker='o',
                                mfc='white', color='k', label='Mean')
@@ -339,7 +348,7 @@ class Window:
         plt.savefig(f'param_conv_{self.window_n}.pdf')
         plt.close()
 
-    def _gaussian_convergence(self, data) -> list:
+    def _fractional_gaussians(self, data) -> list:
         """Fits and plots Gaussians at fractions of the data"""
 
         gaussians = []
@@ -356,35 +365,37 @@ class Window:
     def _parameter_converged(params, threshold) -> bool:
         """Tests whether a parameter has converged within a given threshold"""
 
-        b_prev = params[0]
+        p_prev = params[0]
         for idx, value in enumerate(params[1:]):
 
-            if abs(value - b_prev) < threshold:
+            if abs(value - p_prev) < threshold:
                 return True
             else:
-                b_prev = value
+                p_prev = value
 
         return False
 
-    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> list:
+    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> bool:
         """
-        Returns list of booleans for whether b and c parameters of the
-        Gaussian have converged. Plots b and c parameters along the trajectory
+        Returns True if both b and c parameters of the Gaussian have
+        converged. Plots b and c parameters along the trajectory
         """
         fractional_data = self._get_fractional_data()
-        fractional_gaussians = self._gaussian_convergence(fractional_data)
+        fractional_gaussians = self._fractional_gaussians(fractional_data)
 
-        b_params = [gaussian.params[1] for gaussian in fractional_gaussians]
+        # Set threshold based on expected SD and fraction along RC for mean
+
+        b_params = [gaussian.mean for gaussian in fractional_gaussians]
         b_converged = self._parameter_converged(b_params,
                                                 threshold=b_threshold)
 
-        c_params = [gaussian.params[2] for gaussian in fractional_gaussians]
+        c_params = [gaussian.std for gaussian in fractional_gaussians]
         c_converged = self._parameter_converged(c_params,
                                                 threshold=c_threshold)
 
         self._plot_param_convergence(b_params, c_params)
 
-        return [b_converged, c_converged]
+        return b_converged * c_converged
 
     def bins_converged(self):
         """Tests the convergence of the bin heights relative to previous
@@ -407,6 +418,14 @@ class _Gaussian:
         """
 
         self.params = a, b, c
+
+    @property
+    def mean(self) -> float:
+        return self.params[1]
+
+    @property
+    def std(self) -> float:
+        return self.params[2]
 
     @property
     def area(self) -> float:
@@ -439,6 +458,7 @@ class _Gaussian:
             self.params, _ = curve_fit(self.value, bin_centres, hist,
                                        p0=initial_guess,
                                        maxfev=10000)
+
             # c parameter is always non-negative
             self.params[2] = abs(self.params[2])
 
