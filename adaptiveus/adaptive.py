@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from adaptiveus.log import logger
+from adaptiveus.overlap import calculate_overlap
 from scipy.optimize import curve_fit
 from typing import Optional, Sequence
 if 'paper' in plt.style.available:
@@ -91,37 +92,33 @@ class Windows(list):
 
     def calculate_overlap(self, idx0: int, idx1: int) -> None:
         """
-        Calculates the overlap between two specified windows. Returns the
-        minimum overlap of both normalised overlaps.
+        Calculates the overlap between two specified windows. Sets the LHS and
+        RHS normalised overlap for the two windows
         """
 
         window_a = self._get_fitted_window_from_index(idx0)
         window_b = self._get_fitted_window_from_index(idx1)
 
-        overlap = Overlap(window_a.gaussian.params, window_b.gaussian.params)
-        overlaps = overlap.calculate_overlap()
+        overlaps = calculate_overlap(window_a.gaussian.params,
+                                     window_b.gaussian.params)
 
-        window_a.overlaps[1] = overlaps[0]
-        window_b.overlaps[0] = overlaps[1]
+        window_a.rhs_overlap = overlaps[0]
+        window_b.lhs_overlap = overlaps[1]
 
-        # window.overlap.lhs
-        # Turn overlap class into one function in overlap.py
-
-        return NotImplementedError
+        return None
 
     def plot_overlaps(self) -> None:
         """Plots the overlap as a function of window number"""
 
-        # Needs a test
-        if not any([window.overlaps for window in self]):
+        if not any([window.lhs_overlap for window in self]) or not any(
+                [window.rhs_overlap for window in self]):
             raise AssertionError('Cannot plot overlaps. '
                                  'Please set window.overlaps')
 
-        overlaps = [window.overlaps for window in self]
-        x_vals = [window.window_n for window in self]
+        lhs_overlaps = [window.lhs_overlap for window in self]
+        rhs_overlaps = [window.rhs_overlap for window in self]
 
-        lhs_overlaps = [overlaps[i][0] for i in range(len(self))]
-        rhs_overlaps = [overlaps[i][1] for i in range(len(self))]
+        x_vals = [window.window_n for window in self]
 
         plt.plot(x_vals, rhs_overlaps, marker='o', color='r', linestyle='--',
                  markersize=7, mfc='white', label='RHS Overlap')
@@ -139,7 +136,7 @@ class Windows(list):
         plt.savefig('overlap.pdf')
         plt.close()
 
-        return NotImplementedError
+        return None
 
     def plot_discrepancy(self) -> None:
         """Plots the discrepancy (D = |mean - ref|) for all windows"""
@@ -234,7 +231,7 @@ class Window:
         self.obs_zetas:  Optional[list] = []
         self.gaussian = _Gaussian()
 
-        self.overlaps = [None, None]
+        self.lhs_overlap, self.rhs_overlap = None, None
 
     def __str__(self):
         return f'window_{self.window_n}'
@@ -284,6 +281,7 @@ class Window:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
+        # Set to log scale?
         data_intervals = np.linspace(self.number_of_samples / 10,
                                      self.number_of_samples, 10,
                                      dtype=int)
@@ -320,7 +318,6 @@ class Window:
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
-        # Plot on a log scale?
         b_param_plt = ax1.plot(np.linspace(0.1, 1, 10), b_data,
                                linestyle='--', markersize=7, marker='o',
                                mfc='white', color='k', label='Mean')
@@ -384,7 +381,6 @@ class Window:
         fractional_gaussians = self._fractional_gaussians(fractional_data)
 
         # Set threshold based on expected SD and fraction along RC for mean
-
         b_params = [gaussian.mean for gaussian in fractional_gaussians]
         b_converged = self._parameter_converged(b_params,
                                                 threshold=b_threshold)
