@@ -8,7 +8,7 @@ def _gaussian(x, a, b, c):
 
 
 def _get_area(a, c):
-    return a * c * (2 * np.pi) ** 0.5
+    return a * c * (2 * np.pi)**0.5
 
 
 def _choose_integrand_parameters(params_1, params_2, roots):
@@ -68,6 +68,22 @@ def _calculate_intercepts(params_1, params_2):
                                           ) * b_2**2 - b_1**2
 
     return np.roots([a, b, c])
+
+
+# def calculate_same_gaussian_overlap(params_1, params_2) -> float:
+#     """Calculates the overlap between two Gaussians with identical a and c"""
+#
+#     a, b_1, c = params_1[0], params_1[1], params_1[2]
+#     b_2 = params_2[1]
+#
+#     intercept = (b_2**2 - b_1**2) / (2 * b_2 - 2 * b_1)
+#
+#     lower_int = quad(_gaussian, -np.inf, intercept, args=(a, b_2, c))
+#     upper_int = quad(_gaussian, intercept, np.inf, args=(a, b_1, c))
+#
+#     normalisation_area = _get_area(a, c)
+#
+#     return (lower_int[0] + upper_int[0]) / normalisation_area
 
 
 def calculate_overlap(params_1, params_2):

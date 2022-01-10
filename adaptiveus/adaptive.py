@@ -109,6 +109,7 @@ class Windows(list):
 
     def plot_overlaps(self) -> None:
         """Plots the overlap as a function of window number"""
+        plt.close()
 
         if not any([window.lhs_overlap for window in self]) or not any(
                 [window.rhs_overlap for window in self]):
@@ -125,7 +126,7 @@ class Windows(list):
         plt.plot(x_vals, lhs_overlaps, marker='o', color='b', linestyle='--',
                  markersize=7, mfc='white', label='LHS Overlap')
 
-        plt.axhline(0.3, linestyle='dotted', label='Threshold', color='k',
+        plt.axhline(0.2, linestyle='dotted', label='Threshold', color='k',
                     alpha=0.8)
 
         plt.xlabel('Window index')
@@ -140,6 +141,8 @@ class Windows(list):
 
     def plot_discrepancy(self) -> None:
         """Plots the discrepancy (D = |mean - ref|) for all windows"""
+        plt.close()
+
         if len(self) == 0:
             raise ValueError("No windows are loaded")
 
@@ -259,8 +262,8 @@ class Window:
     def window_range(self) -> np.ndarray:
         """An extended array of the window range for plotting"""
         x_range = abs(max(self.obs_zetas) - min(self.obs_zetas))
-        min_x = min(self.obs_zetas) - 0.1 * x_range
-        max_x = max(self.obs_zetas) + 0.1 * x_range
+        min_x = min(self.obs_zetas) - 0.25 * x_range
+        max_x = max(self.obs_zetas) + 0.25 * x_range
 
         return np.linspace(min_x, max_x, 500)
 
