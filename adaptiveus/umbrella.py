@@ -1,9 +1,8 @@
 import numpy as np
+from scipy import special, optimize
 from mltrain.sampling.umbrella import UmbrellaSampling
 from adaptiveus.adaptive import Windows
-from adaptiveus.overlap import calculate_same_gaussian_overlap
 from typing import Optional, Callable
-from copy import deepcopy
 
 
 class Adaptive:
@@ -85,43 +84,38 @@ class Adaptive:
 
         return None
 
-    def _find_error_function_roots(self, s_target, params_1, params_2):
+    @staticmethod
+    def overlap_error_func(x, s, b, c):
+        """"""
+        # Write a test
+        int_func = (x**2 - b**2) / (2 * x - 2 * b)
 
-        b_1, c = params_1[1], params_1[2]
-        b_2 = params_2[1]
+        erf_1 = special.erf((b - int_func) / (c * np.sqrt(2)))
+        erf_2 = special.erf((x - int_func) / (c * np.sqrt(2)))
 
-        # Do this for Gaussians of same a, b and c and different
+        return 2 * s - 2 - erf_1 + erf_2
 
-        return next_ref
+    def _find_error_function_roots(self, s_target, params):
+        """"""
 
-    def _calculate_next_ref(self, idx0, idx1):
+        b, c = params[1], params[2]
+        inital_guess = b * 1.01
+
+        root = optimize.fsolve(self.overlap_error_func, x0=inital_guess,
+                               args=(s_target, b, c), maxfev=10000)
+
+        return root
+
+    def _calculate_next_ref(self, idx, s_target):
         """Calculate the next reference point based on a target overlap"""
 
-        s_target = 0.1
+        window = self.windows[idx]
+        window.fit_gaussian()
 
-        self.windows[idx0].fit_gaussian()
-        self.windows[idx1].fit_gaussian()
+        next_ref = self._find_error_function_roots(s_target,
+                                                   window.gaussian.params)
 
-        window_a_params = deepcopy(self.windows[idx0].gaussian.params)
-        window_b_params = deepcopy(self.windows[idx1].gaussian.params)
-
-        print(window_a_params)
-        print(window_b_params)
-
-        next_ref = self._find_error_function_roots(s_target, window_a_params, window_b_params)
-
-        for _ in range(10):
-            # Check I am not editing the parameters of window b
-            window_b_params[1] = window_b_params[1] + 0.01
-
-            overlap = calculate_same_gaussian_overlap(window_a_params,
-                                                      window_b_params)
-
-            print(overlap)
-            print(window_b_params)
-            print(self.windows[idx1].gaussian.params)
-
-        return NotImplementedError
+        return next_ref
 
     def run_adaptive(self,
                      traj: Optional,
@@ -129,6 +123,7 @@ class Adaptive:
                      final_ref: Optional[float] = None,
                      n_windows: Optional[int] = 5,
                      adaptive: bool = True,
+                     s_target = 0.2,
                      **kwargs):
         """
         Run adaptive umbrella sampling for ml-train
@@ -173,9 +168,9 @@ class Adaptive:
             self._run_single_window(ref=init_ref,
                                     traj=traj, idx=0, **kwargs)
 
-            # self._adjust_kappa()  # If D is bad (leave this for now)
+            next_ref = self._calculate_next_ref(idx=0, s_target=s_target)
 
-            next_ref = self._calculate_next_ref(idx0=0, idx1=0)
+            # self._adjust_kappa()  # If D is bad (leave this for now)
 
             # idx = 1
             # while next_ref <= final_ref:
