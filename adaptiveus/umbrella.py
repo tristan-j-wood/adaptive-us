@@ -1,5 +1,6 @@
 import numpy as np
 from scipy import special, optimize
+from adaptiveus.log import logger
 from mltrain.sampling.umbrella import UmbrellaSampling
 from adaptiveus.adaptive import Windows
 from typing import Optional, Callable
@@ -77,16 +78,20 @@ class Adaptive:
         for idx, ref in enumerate(refs):
             self._run_single_window(ref=ref, traj=traj, idx=idx, **kwargs)
 
-        [self.windows.calculate_overlap(
-            idx0=idx, idx1=idx + 1) for idx in range(n_windows - 1)]
+        for idx in range(n_windows - 1):
+            self.windows.calculate_overlap(idx0=idx, idx1=idx+1)
 
         self.windows.plot_overlaps()
 
         return None
 
     @staticmethod
-    def overlap_error_func(x, s, b, c):
-        """"""
+    def overlap_error_func(x, s, b, c) -> float:
+        """
+        Returns the value of expression for which the difference between the
+        overlap and the overlap integral fraction for Gaussians with identical
+        a and c parameters is zero
+        """
         # Write a test
         int_func = (x**2 - b**2) / (2 * x - 2 * b)
 
@@ -95,18 +100,23 @@ class Adaptive:
 
         return 2 * s - 2 - erf_1 + erf_2
 
-    def _find_error_function_roots(self, s_target, params):
-        """"""
+    def _find_error_function_roots(self, s_target, params) -> float:
+        """
+        Finds b value of the Gaussian with fixed a and c parameters which
+        gives an overlap equal to the target overlap
+        """
 
         b, c = params[1], params[2]
-        inital_guess = b * 1.01
+        inital_guess = b * 1.01  # Avoids dividing by zero
 
         root = optimize.fsolve(self.overlap_error_func, x0=inital_guess,
                                args=(s_target, b, c), maxfev=10000)
 
-        return root
+        assert len(root) == 1
 
-    def _calculate_next_ref(self, idx, s_target):
+        return float(root[0])
+
+    def _calculate_next_ref(self, idx, s_target) -> float:
         """Calculate the next reference point based on a target overlap"""
 
         window = self.windows[idx]
@@ -117,14 +127,30 @@ class Adaptive:
 
         return next_ref
 
+    def _test_convergence(self, traj, ref, **kwargs) -> bool:
+        """Test the convergence of a fitted Gaussian over a simulation"""
+        self._run_single_window(ref=ref, traj=traj, idx=0, **kwargs)
+
+        converged = self.windows[0].gaussian_converged()
+        self.windows.pop(0)
+
+        return converged
+
+    def _calculate_free_energy(self):
+        return NotImplementedError
+
+    def _adjust_kappa(self):
+        return NotImplementedError
+
     def run_adaptive(self,
                      traj: Optional,
                      init_ref: Optional[float] = None,
                      final_ref: Optional[float] = None,
-                     n_windows: Optional[int] = 5,
+                     n_windows: Optional[int] = 10,
                      adaptive: bool = True,
-                     s_target = 0.2,
-                     **kwargs):
+                     s_target: Optional[float] = 0.2,
+                     test_convergence: bool = True,
+                     **kwargs) -> None:
         """
         Run adaptive umbrella sampling for ml-train
 
@@ -147,6 +173,10 @@ class Adaptive:
                       umbrella sampling but include convergence, overlap and
                       discrepancy calculations and plotting
 
+            s_target: Target fractional overlap in adaptive sampling
+
+            test_convergence: Test the convergence of the data in a window
+
         -------------------
         Keyword Arguments:
 
@@ -159,34 +189,35 @@ class Adaptive:
         final_ref = self.zeta_func(
             traj[-1]) if final_ref is None else final_ref
 
+        if test_convergence:
+            converged = self._test_convergence(traj=traj, ref=init_ref,
+                                               **kwargs)
+            logger.info(f'Gaussian parameters converged: {converged}')
+
         if not adaptive:
             self._run_non_adaptive(traj=traj, init_ref=init_ref,
                                    final_ref=final_ref, n_windows=n_windows,
                                    **kwargs)
 
         else:
-            self._run_single_window(ref=init_ref,
-                                    traj=traj, idx=0, **kwargs)
 
-            next_ref = self._calculate_next_ref(idx=0, s_target=s_target)
+            idx, ref = 0, init_ref
+            while ref <= final_ref:
+                self._run_single_window(ref=ref,
+                                        traj=traj, idx=idx, **kwargs)
 
-            # self._adjust_kappa()  # If D is bad (leave this for now)
+                ref = self._calculate_next_ref(idx=idx, s_target=s_target)
 
-            # idx = 1
-            # while next_ref <= final_ref:
-            #
-            #     self._run_single_window(ref=next_ref, traj=traj, idx=idx, **kwargs)
-            #
-            #     # self._adjust_kappa()  # If D is bad (leave this for now)
-            #
-            #     self.calculate_overlap(idx0=idx-1, idx1=idx)
-            #
-            #     next_ref = self._calculate_next_ref()
-            #
-            #     idx += 1
+                if idx != 0:
+                    self.windows.calculate_overlap(idx0=idx-1, idx1=idx)
+                idx += 1
+
+                self._adjust_kappa()
 
         self.windows.plot_discrepancy()
         self.windows.plot_histogram()
+
+        self._calculate_free_energy()
 
         return None
 

@@ -1,0 +1,87 @@
+import os
+import mltrain as mlt
+import numpy as np
+from adaptiveus.umbrella import Adaptive
+from mltrain.sampling.reaction_coord import AverageDistance
+from adaptiveus.utils import work_in_zipped_dir
+here = os.path.abspath(os.path.dirname(__file__))
+mlt.Config.n_cores = 1
+
+
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
+def test_mltrain_non_adaptive():
+
+    # Load in mltrain files
+    traj = mlt.ConfigurationSet()
+    traj.load_xyz(filename='rxn_coord.xyz', charge=-1, mult=1)
+    traj[0].save_xyz(filename='init.xyz')
+    system = mlt.System(mlt.Molecule('init.xyz', charge=-1, mult=1),
+                        box=[10, 10, 10])
+    gap = mlt.potentials.gap.gap.GAP('potential', system=system)
+
+    # Initialise Adaptive class
+    adaptive = Adaptive(method='mlt',
+                        mlp=gap,
+                        zeta_func=AverageDistance([0, 1]),
+                        kappa=100,
+                        temp=300,
+                        interval=5,
+                        dt=0.5)
+
+    assert adaptive.zeta_func is not None
+    assert adaptive.mlp is not None
+
+    # Run umbrella sampling without any adaptive and convergence testing
+    adaptive.run_adaptive(traj=traj,
+                          adaptive=False,
+                          test_convergence=True,
+                          init_ref=2,
+                          final_ref=2.2,
+                          n_windows=3,
+                          fs=1000)
+
+    assert os.path.exists('param_conv_0.pdf')
+    assert os.path.exists('gaussian_conv_0.pdf')
+
+    assert adaptive.windows[1].lhs_overlap is not None
+    assert adaptive.windows[1].rhs_overlap is not None
+
+    assert len(adaptive.windows) == 3
+    assert np.isclose(adaptive.windows[0].zeta_ref, 2)
+    assert np.isclose(adaptive.windows[-1].zeta_ref, 2.2)
+
+    assert os.path.exists('overlap.pdf')
+    assert os.path.exists('window_histogram.pdf')
+    assert os.path.exists('discrepancy.pdf')
+
+
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
+def test_mltrain_adaptive():
+
+    # Load in mltrain files
+    traj = mlt.ConfigurationSet()
+    traj.load_xyz(filename='rxn_coord.xyz', charge=-1, mult=1)
+    traj[0].save_xyz(filename='init.xyz')
+    system = mlt.System(mlt.Molecule('init.xyz', charge=-1, mult=1),
+                        box=[10, 10, 10])
+    gap = mlt.potentials.gap.gap.GAP('potential', system=system)
+
+    # Initialise Adaptive class
+    adaptive = Adaptive(method='mlt',
+                        mlp=gap,
+                        zeta_func=AverageDistance([0, 1]),
+                        kappa=100,
+                        temp=300,
+                        interval=5,
+                        dt=0.5)
+
+    # Run umbrella sampling without any adaptive and convergence testing
+    adaptive.run_adaptive(traj=traj,
+                          adaptive=True,
+                          test_convergence=True,
+                          init_ref=2,
+                          final_ref=2.2,
+                          n_windows=3,
+                          fs=1000)
+
+    assert adaptive.windows[1].zeta_ref is not None

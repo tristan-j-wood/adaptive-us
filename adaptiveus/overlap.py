@@ -3,16 +3,27 @@ import numpy as np
 from scipy.integrate import quad
 
 
-def _gaussian(x, a, b, c):
+def _gaussian(x, a, b, c) -> float:
+    """Value of the Gaussian at point x"""
     return a * np.exp(-(x - b)**2 / (2. * c**2))
 
 
-def _get_area(a, c):
+def _get_area(a, c) -> float:
+    """
+    Returns integral of Gaussian between -∞ and ∞:
+
+    I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
+    """
     return a * c * (2 * np.pi)**0.5
 
 
-def _choose_integrand_parameters(params_1, params_2, roots):
-    """Select the appopriate parameters used for the integration"""
+def _choose_integrand_parameters(params_1, params_2, roots) -> tuple:
+    """
+    Select the appopriate parameters used for the integration. First it tries
+    to identify which Gaussian lies under the another between the two roots.
+    If unsucessful, it takes the Gaussian with the higher mean as the first
+    set of parameters
+    """
 
     midpoint = (min(roots) + max(roots)) / 2
 
@@ -26,10 +37,14 @@ def _choose_integrand_parameters(params_1, params_2, roots):
         return params_2, params_1
 
     else:
-        return ValueError("Could not determine which parameters to use")
+        if params_2[1] > params_1[1]:
+            return params_2, params_1
+
+        else:
+            return params_1, params_2
 
 
-def _calculate_integral(params_1, params_2, roots):
+def _calculate_integral(params_1, params_2, roots) -> float:
     """Calculates the sum of integrals using the intercepts as limits"""
 
     if len(roots) == 2:
@@ -48,16 +63,17 @@ def _calculate_integral(params_1, params_2, roots):
 
         return lower_int[0] + middle_int[0] + upper_int[0]
 
-    elif len(roots) == 1:
-        logger.info(f'Found one real root: {roots}')
-        return NotImplementedError
-
     else:
-        return ValueError("Must be either 1 or 2 real roots")
+        # There will always be two real roots for sampled data
+        raise ValueError("Must be 2 real roots")
 
 
-def _calculate_intercepts(params_1, params_2):
-    """Calculates the point(s) of intersection between two Gaussians"""
+def _calculate_intercepts(params_1, params_2) -> np.ndarray:
+    """
+    Calculates the point(s) of intersection between two Gaussians. Finds the
+    roots of the quadratic polynomial equation relating to two intersecting
+    Gaussians
+    """
 
     a_1, b_1, c_1 = params_1
     a_2, b_2, c_2 = params_2
@@ -70,23 +86,7 @@ def _calculate_intercepts(params_1, params_2):
     return np.roots([a, b, c])
 
 
-# def calculate_same_gaussian_overlap(params_1, params_2) -> float:
-#     """Calculates the overlap between two Gaussians with identical a and c"""
-#
-#     a, b_1, c = params_1[0], params_1[1], params_1[2]
-#     b_2 = params_2[1]
-#
-#     intercept = (b_2**2 - b_1**2) / (2 * b_2 - 2 * b_1)
-#
-#     lower_int = quad(_gaussian, -np.inf, intercept, args=(a, b_2, c))
-#     upper_int = quad(_gaussian, intercept, np.inf, args=(a, b_1, c))
-#
-#     normalisation_area = _get_area(a, c)
-#
-#     return (lower_int[0] + upper_int[0]) / normalisation_area
-
-
-def calculate_overlap(params_1, params_2):
+def calculate_overlap(params_1, params_2) -> list:
     """Calculates the fractional overlap between two Gaussians"""
 
     roots = _calculate_intercepts(params_1, params_2)
@@ -104,6 +104,5 @@ def calculate_overlap(params_1, params_2):
         return [norm_overlap_1, norm_overlap_2]
 
     else:
-        logger.info(f'Found no real roots: {roots}')
-        # insert stuff for when there are no roots
-        return NotImplementedError
+        # There will always be two real roots for sampled data
+        raise ValueError(f"Found no real roots: {roots}")

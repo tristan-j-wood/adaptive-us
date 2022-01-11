@@ -65,17 +65,13 @@ class Windows(list):
     def zeta_refs(self) -> Optional[np.ndarray]:
         """
         Array of ζ_ref for each window
-
-        -----------------------------------------------------------------------
-        Returns:
-            (np.ndarray(float) | None):
         """
         if len(self) == 0:
             return None
 
         return np.array([window.zeta_ref for window in self])
 
-    def _get_fitted_window_from_index(self, idx):
+    def _get_fitted_window_from_index(self, idx) -> 'Window':
         """
         Returns the window associated with the specified index and fits a
         Gaussian to this window data
@@ -240,7 +236,7 @@ class Window:
         return f'window_{self.window_n}'
 
     @property
-    def discrepancy(self):
+    def discrepancy(self) -> float:
         """
         Calculates the discrepancy for current window.
         D = |mean - ref|
@@ -262,6 +258,7 @@ class Window:
     def window_range(self) -> np.ndarray:
         """An extended array of the window range for plotting"""
         x_range = abs(max(self.obs_zetas) - min(self.obs_zetas))
+
         min_x = min(self.obs_zetas) - 0.25 * x_range
         max_x = max(self.obs_zetas) + 0.25 * x_range
 
@@ -269,7 +266,6 @@ class Window:
 
     def fit_gaussian(self) -> None:
         """Fits Gaussian parameters to the window data"""
-
         if len(self.obs_zetas) == 0:
             raise ValueError("Not observed zetas. Is the data loaded?")
 
@@ -277,21 +273,29 @@ class Window:
 
         return None
 
+    @staticmethod
+    def powspace(start, stop, power, num) -> np.ndarray:
+        """Returns values spaced according to the power specified"""
+
+        start = np.power(start, 1 / float(power))
+        stop = np.power(stop, 1 / float(power))
+
+        return np.power(np.linspace(start, stop, num=num), power)
+
     def _get_fractional_data(self) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
-
         if len(self.obs_zetas) == 0:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
-        # Set to log scale?
-        data_intervals = np.linspace(self.number_of_samples / 10,
-                                     self.number_of_samples, 10,
-                                     dtype=int)
+        data_intervals = self.powspace(self.number_of_samples / 10,
+                                       self.number_of_samples,
+                                       power=100,
+                                       num=10)
 
-        return [self.obs_zetas[:frac] for frac in data_intervals]
+        return [self.obs_zetas[:int(frac)] for frac in data_intervals]
 
-    def _plot_gaussian_convergence(self, gaussians):
+    def _plot_gaussian_convergence(self, gaussians) -> None:
         """
         Plots the histogram data and Gaussians fitted to 10% incremements
         of the window trajectory
@@ -315,17 +319,21 @@ class Window:
 
         return None
 
-    def _plot_param_convergence(self, b_data, c_data):
+    def _plot_param_convergence(self, b_data, c_data) -> None:
         """Plots the mean and standard deviation as a fraction of the traj"""
 
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
-        b_param_plt = ax1.plot(np.linspace(0.1, 1, 10), b_data,
+        fractions = self.powspace(self.number_of_samples / 10,
+                                  self.number_of_samples,
+                                  power=10, num=10) / self.number_of_samples
+
+        b_param_plt = ax1.plot(fractions, b_data,
                                linestyle='--', markersize=7, marker='o',
                                mfc='white', color='k', label='Mean')
 
-        c_param_plt = ax2.plot(np.linspace(0.1, 1, 10), c_data,
+        c_param_plt = ax2.plot(fractions, c_data,
                                linestyle='--', markersize=7, marker='o',
                                mfc='white', color='b',
                                label='Standard deviation')
@@ -337,16 +345,14 @@ class Window:
         ax1.set_xlabel('Fraction of window trajectory')
         ax1.set_ylabel('Mean / Å')
         ax1.set_xlim(0)
-        # ax1.set_ylim(min(b_data) - 0.1 * min(b_data),
-        #              max(b_data) + 0.1 * max(b_data))
 
         ax2.set_ylabel('Standard deviation / Å')
-        # ax2.set_ylim(min(c_data) - 0.1 * min(c_data),
-        #              max(c_data) + 0.1 * max(c_data))
 
         plt.tight_layout()
         plt.savefig(f'param_conv_{self.window_n}.pdf')
         plt.close()
+
+        return None
 
     def _fractional_gaussians(self, data) -> list:
         """Fits and plots Gaussians at fractions of the data"""
@@ -383,7 +389,7 @@ class Window:
         fractional_data = self._get_fractional_data()
         fractional_gaussians = self._fractional_gaussians(fractional_data)
 
-        # Set threshold based on expected SD and fraction along RC for mean
+        # Set threshold based on expected SD and fraction along coord for mean
         b_params = [gaussian.mean for gaussian in fractional_gaussians]
         b_converged = self._parameter_converged(b_params,
                                                 threshold=b_threshold)
@@ -398,8 +404,7 @@ class Window:
 
     def bins_converged(self):
         """Tests the convergence of the bin heights relative to previous
-        using an autocorrelation function"""
-
+        bins"""
         return NotImplementedError
 
 
@@ -420,10 +425,12 @@ class _Gaussian:
 
     @property
     def mean(self) -> float:
+        """Mean of the Gaussian"""
         return self.params[1]
 
     @property
     def std(self) -> float:
+        """Standard deviation of the Gaussian"""
         return self.params[2]
 
     @property
@@ -436,14 +443,15 @@ class _Gaussian:
         assert all(self.params)
         return self.params[0] * self.params[2] * (2 * np.pi)**0.5
 
-    def __call__(self, x):
+    def __call__(self, x) -> float:
         """Returns y-value of Gaussian given input parameters and x-value"""
 
         assert all(self.params)
         return self.value(x, *self.params)
 
     @staticmethod
-    def value(x, a, b, c):
+    def value(x, a, b, c) -> float:
+        """Value of the Gaussian at point x"""
         return a * np.exp(-(x - b)**2 / (2. * c**2))
 
     def fit(self, data) -> None:
