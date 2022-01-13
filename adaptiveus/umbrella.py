@@ -1,30 +1,40 @@
+import mltrain.sampling.md
 import numpy as np
+from multiprocessing import Pool
 from scipy import special, optimize
 from adaptiveus.log import logger
-from mltrain.sampling.umbrella import UmbrellaSampling
 from adaptiveus.adaptive import Windows
+from adaptiveus.config import Config
+from mltrain.sampling.umbrella import UmbrellaSampling as MltrainUS
 from typing import Optional, Callable
+from copy import deepcopy
 
 
-class Adaptive:
+class UmbrellaSampling:
 
     def __init__(self,
-                 method: str,
-                 mlp: Optional['mltrain.potentials._base.MLPotential'],
+                 traj: 'mltrain.configurations.trajectory',
+                 driver: 'mltrain.potentials._base.MLPotential',
                  zeta_func: Optional['mltrain.sampling.reaction_coord.ReactionCoordinate'],
                  kappa: float,
                  temp: float,
                  interval: int,
-                 dt: float):
+                 dt: float,
+                 init_ref: Optional[float] = None,
+                 final_ref: Optional[float] = None,
+                 ):
         """
         Perform adaptive umbrella sampling using (currently only) mltrain to
         drive the dynamics
 
         -----------------------------------------------------------------------
         Arguments:
-            method: Name of umbrella sampling driver: 'mlt', 'gmx'
 
-            mlp: Machine learnt potential
+            traj: .xyz trajectory from which to initialise the umbrella over,
+                  e.g. a 'pulling' trajectory that has sufficient sampling of a
+                  range of reaction coordinates
+
+            driver: Driver for the dynamics. E.g., machine learnt potential
 
             zeta_func: Reaction coordinate, as the function of atomic positions
 
@@ -33,66 +43,78 @@ class Adaptive:
             temp: Temperature in K to initialise velocities and to run NVT MD.
                   Must be positive
 
-            interval: (int) Interval between saving the geometry
+            interval: Interval between saving the geometry
 
-            dt: (float) Time-step in fs
+            dt: Time-step in fs
+
+            init_ref: Value of reaction coordinate in Å for
+                      first window
+
+            final_ref: Value of reaction coordinate in Å for
+                       first window
         """
 
-        self.method:            str = method
-        self.mlp:               Optional = mlp
+        self.driver = driver    # Only mltrain implemented
         self.zeta_func:         Optional[Callable] = zeta_func
+
+        self.traj = traj        # Only mltrain trajectories implemented
 
         self.kappa:             float = kappa
         self.temp:              float = temp
         self.interval:          int = interval
         self.dt:                float = dt
 
-        self.windows:           [Windows] = Windows()
+        self.windows:           Windows = Windows()
 
-    def _run_single_window(self, ref, traj, idx, **kwargs) -> None:
+        self.init_ref = self._set_reference_point(init_ref, idx=0)
+        self.final_ref = self._set_reference_point(final_ref, idx=-1)
+
+    def _set_reference_point(self, ref, idx) -> float:
+        """
+        Sets the reference based either on the specified reference or a
+        value from the trajectory
+        """
+        return self.zeta_func(self.traj[idx]) if ref is None else ref
+
+    def _run_single_window(self, ref, idx, **kwargs
+                           ) -> 'adaptiveus.adaptive.window':
         """Run a single umbrella sampling window using a specified method"""
 
-        if self.method == 'mlt':
+        if isinstance(self.driver, mltrain.potentials._base.MLPotential):
             adaptive = MltrainAdaptive(zeta_func=self.zeta_func,
                                        kappa=self.kappa,
                                        temp=self.temp,
                                        interval=self.interval,
                                        dt=self.dt)
 
-            adaptive.run_mlt_window(traj=traj, mlp=self.mlp, ref=ref, idx=idx,
-                                    **kwargs)
+            adaptive.run_mlt_window(traj=self.traj, mlp=self.driver, ref=ref,
+                                    idx=idx, **kwargs)
+            window = Windows()
 
-            self.windows.load(f'window_{idx}.txt')
+            #######################################
+            # Will this know where to look?
+            window.load(f'window_{idx}.txt')
+
+            print(window[0])
+            #######################################
 
         else:
             raise NotImplementedError
 
-        return None
-
-    def _run_non_adaptive(self, traj, init_ref, final_ref, n_windows,
-                          **kwargs) -> None:
-        """Run non-adaptive umbrella sampling"""
-
-        refs = self._reference_values(traj, n_windows, init_ref, final_ref)
-
-        for idx, ref in enumerate(refs):
-            self._run_single_window(ref=ref, traj=traj, idx=idx, **kwargs)
-
-        for idx in range(n_windows - 1):
-            self.windows.calculate_overlap(idx0=idx, idx1=idx+1)
-
-        self.windows.plot_overlaps()
-
-        return None
+        return window[0]
 
     @staticmethod
-    def overlap_error_func(x, s, b, c) -> float:
+    def _overlap_error_func(x, s, b, c) -> float:
         """
         Returns the value of expression for which the difference between the
-        overlap and the overlap integral fraction for Gaussians with identical
-        a and c parameters is zero
+        overlap, S, and the overlap integral for Gaussians, with identical
+        a and c parameters, is zero:
+
+        S = 1 + 0.5 * [erf((b - A) / c √2) + erf((x - A) / c √2)]
+
+        2S - 2 - erf((b - A) / c √2) + erf((x - A) / c √2) = 0
         """
-        # Write a test
+
         int_func = (x**2 - b**2) / (2 * x - 2 * b)
 
         erf_1 = special.erf((b - int_func) / (c * np.sqrt(2)))
@@ -109,7 +131,7 @@ class Adaptive:
         b, c = params[1], params[2]
         inital_guess = b * 1.01  # Avoids dividing by zero
 
-        root = optimize.fsolve(self.overlap_error_func, x0=inital_guess,
+        root = optimize.fsolve(self._overlap_error_func, x0=inital_guess,
                                args=(s_target, b, c), maxfev=10000)
 
         assert len(root) == 1
@@ -127,12 +149,12 @@ class Adaptive:
 
         return next_ref
 
-    def _test_convergence(self, traj, ref, **kwargs) -> bool:
+    def _test_convergence(self, ref, **kwargs) -> bool:
         """Test the convergence of a fitted Gaussian over a simulation"""
-        self._run_single_window(ref=ref, traj=traj, idx=0, **kwargs)
+        window = self._run_single_window(ref=ref, idx=0, **kwargs)
+        self.windows.append(window)
 
-        converged = self.windows[0].gaussian_converged()
-        self.windows.pop(0)
+        converged = window.gaussian_converged()
 
         return converged
 
@@ -142,37 +164,65 @@ class Adaptive:
     def _adjust_kappa(self):
         return NotImplementedError
 
-    def run_adaptive(self,
-                     traj: Optional,
-                     init_ref: Optional[float] = None,
-                     final_ref: Optional[float] = None,
-                     n_windows: Optional[int] = 10,
-                     adaptive: bool = True,
-                     s_target: Optional[float] = 0.2,
-                     test_convergence: bool = True,
-                     **kwargs) -> None:
+    def run_non_adaptive_sampling(self,
+                                  n_windows: Optional[int] = 10,
+                                  **kwargs) -> None:
         """
         Run adaptive umbrella sampling for ml-train
 
         -----------------------------------------------------------------------
         Arguments:
-            traj: Trajectory from which to initialise the umbrella over, e.g.
-                  a 'pulling' trajectory that has sufficient sampling of a
-                  range f reaction coordinates
+            n_windows: Number of windows to run umbrella sampling for
 
-            init_ref: Value of reaction coordinate in Å for
-                      first window
+            test_convergence: Test the convergence of the data in a window
 
-            final_ref: Value of reaction coordinate in Å for
-                       first window
+        -------------------
+        Keyword Arguments:
 
-            n_windows: Number of windows to run umbrella sampling for if
-                       adaptive is False
+            {fs, ps, ns}: Simulation time in some units
+        """
 
-            adaptive: Run adaptive sampling if True. Otherwise run normal
-                      umbrella sampling but include convergence, overlap and
-                      discrepancy calculations and plotting
+        converged = self._test_convergence(ref=self.init_ref, **kwargs)
+        logger.info(f'Gaussian parameters converged: {converged}')
 
+        refs = self._reference_values(n_windows)
+
+        n_processes = min(len(refs)-1, Config.n_cores)
+
+        # Start from index 1 as test_convergence runs the first window
+        with Pool(processes=n_processes) as pool:
+            results = [pool.apply_async(self._run_single_window,
+                                        args=(ref.copy(),
+                                              idx+1),
+                                        kwds=deepcopy(kwargs))
+                       for idx, ref in enumerate(refs[1:])]
+
+        for result in results:
+
+            try:
+                self.windows.append(result.get(timeout=2))
+
+            except Exception as err:
+                logger.error(f'Raised an exception in simulation: \n{err}')
+                continue
+
+        for idx in range(n_windows - 1):
+            self.windows.calculate_overlap(idx0=idx, idx1=idx+1)
+
+        self.windows.plot_overlaps()
+        self.windows.plot_discrepancy()
+        self.windows.plot_histogram()
+
+        return None
+
+    def run_adaptive_sampling(self,
+                              s_target: Optional[float] = 0.2,
+                              **kwargs) -> None:
+        """
+        Run adaptive umbrella sampling for ml-train
+
+        -----------------------------------------------------------------------
+        Arguments:
             s_target: Target fractional overlap in adaptive sampling
 
             test_convergence: Test the convergence of the data in a window
@@ -183,36 +233,23 @@ class Adaptive:
             {fs, ps, ns}: Simulation time in some units
         """
 
-        init_ref = self.zeta_func(
-            traj[0]) if init_ref is None else init_ref
+        converged = self._test_convergence(ref=self.init_ref, **kwargs)
+        logger.info(f'Gaussian parameters converged: {converged}')
 
-        final_ref = self.zeta_func(
-            traj[-1]) if final_ref is None else final_ref
+        ref = self._calculate_next_ref(idx=0, s_target=s_target)
 
-        if test_convergence:
-            converged = self._test_convergence(traj=traj, ref=init_ref,
-                                               **kwargs)
-            logger.info(f'Gaussian parameters converged: {converged}')
+        idx, ref = 1, ref
+        while ref <= self.final_ref:
 
-        if not adaptive:
-            self._run_non_adaptive(traj=traj, init_ref=init_ref,
-                                   final_ref=final_ref, n_windows=n_windows,
-                                   **kwargs)
+            window = self._run_single_window(ref=ref, idx=idx, **kwargs)
 
-        else:
+            self.windows.append(window)
+            self._adjust_kappa()
 
-            idx, ref = 0, init_ref
-            while ref <= final_ref:
-                self._run_single_window(ref=ref,
-                                        traj=traj, idx=idx, **kwargs)
+            self.windows.calculate_overlap(idx0=idx-1, idx1=idx)
 
-                ref = self._calculate_next_ref(idx=idx, s_target=s_target)
-
-                if idx != 0:
-                    self.windows.calculate_overlap(idx0=idx-1, idx1=idx)
-                idx += 1
-
-                self._adjust_kappa()
+            ref = self._calculate_next_ref(idx=idx, s_target=s_target)
+            idx += 1
 
         self.windows.plot_discrepancy()
         self.windows.plot_histogram()
@@ -221,18 +258,9 @@ class Adaptive:
 
         return None
 
-    def _reference_values(self, traj, num, init_ref, final_ref) -> np.ndarray:
-        """Set the values of the reference for each window, if the
-        initial and final reference values of the reaction coordinate are None
-        then use the values in the start or end of the trajectory"""
-
-        if init_ref is None:
-            init_ref = self.zeta_func(traj[0])
-
-        if final_ref is None:
-            final_ref = self.zeta_func(traj[-1])
-
-        return np.linspace(init_ref, final_ref, num)
+    def _reference_values(self, num) -> np.ndarray:
+        """Set the values of the reference for each window"""
+        return np.linspace(self.init_ref, self.final_ref, num)
 
 
 class MltrainAdaptive:
@@ -267,7 +295,12 @@ class MltrainAdaptive:
         self.interval:          int = interval
         self.dt:                float = dt
 
-    def run_mlt_window(self, traj, mlp, ref, idx, **kwargs) -> None:
+    def run_mlt_window(self,
+                       traj: 'mltrain.sampling.md.Trajectory',
+                       mlp: 'mltrain.potentials._base.MLPotential',
+                       ref: float,
+                       idx: int,
+                       **kwargs) -> None:
         """
         Run a single umbrella window using mltrain and save the sampled
         reaction coordinates
@@ -290,8 +323,7 @@ class MltrainAdaptive:
             {fs, ps, ns}: Simulation time in some units
         """
 
-        umbrella = UmbrellaSampling(zeta_func=self.zeta_func,
-                                    kappa=self.kappa)
+        umbrella = MltrainUS(zeta_func=self.zeta_func, kappa=self.kappa)
 
         umbrella.run_umbrella_sampling(traj=traj,
                                        mlp=mlp,

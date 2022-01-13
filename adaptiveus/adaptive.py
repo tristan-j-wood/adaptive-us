@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from adaptiveus.log import logger
-from adaptiveus.overlap import calculate_overlap
+from adaptiveus.overlap import calculate_overlaps
 from scipy.optimize import curve_fit
 from typing import Optional, Sequence
 if 'paper' in plt.style.available:
@@ -95,8 +95,8 @@ class Windows(list):
         window_a = self._get_fitted_window_from_index(idx0)
         window_b = self._get_fitted_window_from_index(idx1)
 
-        overlaps = calculate_overlap(window_a.gaussian.params,
-                                     window_b.gaussian.params)
+        overlaps = calculate_overlaps(window_a.gaussian,
+                                      window_b.gaussian)
 
         window_a.rhs_overlap = overlaps[0]
         window_b.lhs_overlap = overlaps[1]
@@ -105,16 +105,19 @@ class Windows(list):
 
     def plot_overlaps(self) -> None:
         """Plots the overlap as a function of window number"""
+
+        # Closes any matplotlib plots that are still open
         plt.close()
 
         if not any([window.lhs_overlap for window in self]) or not any(
                 [window.rhs_overlap for window in self]):
-            raise AssertionError('Cannot plot overlaps. '
-                                 'Please set window.overlaps')
+            raise AssertionError('Cannot plot overlaps. Please set at least '
+                                 'window.rhs_overlap or window.lhs_overlap')
 
         lhs_overlaps = [window.lhs_overlap for window in self]
         rhs_overlaps = [window.rhs_overlap for window in self]
 
+        # Ensures each x-value matches its window index
         x_vals = [window.window_n for window in self]
 
         plt.plot(x_vals, rhs_overlaps, marker='o', color='r', linestyle='--',
@@ -228,7 +231,7 @@ class Window:
         self.kappa = kappa
 
         self.obs_zetas:  Optional[list] = []
-        self.gaussian = _Gaussian()
+        self.gaussian = Gaussian()
 
         self.lhs_overlap, self.rhs_overlap = None, None
 
@@ -274,13 +277,17 @@ class Window:
         return None
 
     @staticmethod
-    def powspace(start, stop, power, num) -> np.ndarray:
-        """Returns values spaced according to the power specified"""
+    def _powspace(start, stop, power, num) -> np.ndarray:
+        """
+        Returns values spaced according to the power specified.
+        E.g., start = 0, stop = 100, power = 2, num = 11:
+              returns 0, 1, 4, 9,..., 100
+        """
 
         start = np.power(start, 1 / float(power))
         stop = np.power(stop, 1 / float(power))
 
-        return np.power(np.linspace(start, stop, num=num), power)
+        return np.power(np.linspace(start, stop, num=num), power).astype(int)
 
     def _get_fractional_data(self) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
@@ -288,12 +295,12 @@ class Window:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
-        data_intervals = self.powspace(self.number_of_samples / 10,
-                                       self.number_of_samples,
-                                       power=100,
-                                       num=10)
+        data_intervals = self._powspace(self.number_of_samples / 10,
+                                        self.number_of_samples,
+                                        power=100,
+                                        num=10)
 
-        return [self.obs_zetas[:int(frac)] for frac in data_intervals]
+        return [self.obs_zetas[:interval] for interval in data_intervals]
 
     def _plot_gaussian_convergence(self, gaussians) -> None:
         """
@@ -325,9 +332,9 @@ class Window:
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
-        fractions = self.powspace(self.number_of_samples / 10,
-                                  self.number_of_samples,
-                                  power=10, num=10) / self.number_of_samples
+        fractions = self._powspace(self.number_of_samples / 10,
+                                   self.number_of_samples,
+                                   power=10, num=10) / self.number_of_samples
 
         b_param_plt = ax1.plot(fractions, b_data,
                                linestyle='--', markersize=7, marker='o',
@@ -359,7 +366,7 @@ class Window:
 
         gaussians = []
         for subdata in data:
-            gaussian = _Gaussian()
+            gaussian = Gaussian()
             gaussian.fit(subdata)
             gaussians.append(gaussian)
 
@@ -381,7 +388,8 @@ class Window:
 
         return False
 
-    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> bool:
+    def gaussian_converged(self, b_threshold: float = 0.05,
+                           c_threshold: float = 0.01) -> bool:
         """
         Returns True if both b and c parameters of the Gaussian have
         converged. Plots b and c parameters along the trajectory
@@ -408,7 +416,23 @@ class Window:
         return NotImplementedError
 
 
-class _Gaussian:
+def area(gaussian) -> float:
+    """
+    Returns integral of Gaussian between -∞ and ∞:
+
+    I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
+    """
+    a, _, c = gaussian.params
+
+    return a * c * (2 * np.pi)**0.5
+
+
+def value(x, a, b, c) -> float:
+    """Value of the Gaussian at point x"""
+    return a * np.exp(-(x - b)**2 / (2. * c**2))
+
+
+class Gaussian:
     """Gaussian function fit to a set of data"""
 
     def __init__(self,
@@ -433,26 +457,11 @@ class _Gaussian:
         """Standard deviation of the Gaussian"""
         return self.params[2]
 
-    @property
-    def area(self) -> float:
-        """
-        Returns integral of Gaussian between -∞ and ∞:
-
-        I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
-        """
-        assert all(self.params)
-        return self.params[0] * self.params[2] * (2 * np.pi)**0.5
-
     def __call__(self, x) -> float:
         """Returns y-value of Gaussian given input parameters and x-value"""
 
         assert all(self.params)
-        return self.value(x, *self.params)
-
-    @staticmethod
-    def value(x, a, b, c) -> float:
-        """Value of the Gaussian at point x"""
-        return a * np.exp(-(x - b)**2 / (2. * c**2))
+        return value(x, *self.params)
 
     def fit(self, data) -> None:
         """Fit a Gaussian to a set of data"""
@@ -462,7 +471,7 @@ class _Gaussian:
 
         initial_guess = [1.0, 1.0, 1.0]
         try:
-            self.params, _ = curve_fit(self.value, bin_centres, hist,
+            self.params, _ = curve_fit(value, bin_centres, hist,
                                        p0=initial_guess,
                                        maxfev=10000)
 
