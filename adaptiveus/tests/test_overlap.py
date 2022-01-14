@@ -28,6 +28,3 @@ def test_get_params():
 
     assert np.isclose(s_1, 0.158, atol=1e-3)
     assert np.isclose(s_2, 0.791, atol=1e-3)
-
-
-

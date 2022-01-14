@@ -124,9 +124,6 @@ def test_discrepancy():
     with pytest.raises(ValueError):
         adaptive.plot_discrepancy()
 
-    adaptive.load(filename='data_0.txt')
-    adaptive.load(filename='data_1.txt')
-    adaptive.load(filename='data_2.txt')
-    adaptive.load(filename='data_3.txt')
+    [adaptive.load(f'data_{i}.txt') for i in range(4)]
 
     adaptive.plot_discrepancy()

@@ -11,6 +11,7 @@ adp.Config.n_cores = 4
 
 @work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def load_files():
+
     # Load in mltrain files
     traj = mlt.ConfigurationSet()
     traj.load_xyz(filename='rxn_coord.xyz', charge=-1, mult=1)
@@ -87,6 +88,7 @@ def test_mltrain_adaptive():
 
 
 def test_overlap_error_func():
+    
     # Initialise UmbrellaSampling class
     adaptive = UmbrellaSampling(traj=traj,
                                 driver=gap,

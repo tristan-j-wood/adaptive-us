@@ -89,19 +89,13 @@ class UmbrellaSampling:
 
             adaptive.run_mlt_window(traj=self.traj, mlp=self.driver, ref=ref,
                                     idx=idx, **kwargs)
-            window = Windows()
-
-            #######################################
-            # Will this know where to look?
-            window.load(f'window_{idx}.txt')
-
-            print(window[0])
-            #######################################
+            windows = Windows()
+            windows.load(f'window_{idx}.txt')
 
         else:
             raise NotImplementedError
 
-        return window[0]
+        return windows[0]
 
     @staticmethod
     def _overlap_error_func(x, s, b, c) -> float:
@@ -182,29 +176,23 @@ class UmbrellaSampling:
             {fs, ps, ns}: Simulation time in some units
         """
 
-        converged = self._test_convergence(ref=self.init_ref, **kwargs)
-        logger.info(f'Gaussian parameters converged: {converged}')
-
         refs = self._reference_values(n_windows)
-
         n_processes = min(len(refs)-1, Config.n_cores)
 
-        # Start from index 1 as test_convergence runs the first window
         with Pool(processes=n_processes) as pool:
-            results = [pool.apply_async(self._run_single_window,
-                                        args=(ref.copy(),
-                                              idx+1),
-                                        kwds=deepcopy(kwargs))
+
+            converged = self._test_convergence(ref=self.init_ref, **kwargs)
+            logger.info(f'Gaussian parameters converged: {converged}')
+
+            # Start from index 1 as test_convergence runs the first window
+            results = [pool.apply(self._run_single_window,
+                                  args=(ref.copy(),
+                                        idx+1),
+                                  kwds=deepcopy(kwargs))
                        for idx, ref in enumerate(refs[1:])]
 
         for result in results:
-
-            try:
-                self.windows.append(result.get(timeout=2))
-
-            except Exception as err:
-                logger.error(f'Raised an exception in simulation: \n{err}')
-                continue
+            self.windows.append(result)
 
         for idx in range(n_windows - 1):
             self.windows.calculate_overlap(idx0=idx, idx1=idx+1)
@@ -242,15 +230,15 @@ class UmbrellaSampling:
         while ref <= self.final_ref:
 
             window = self._run_single_window(ref=ref, idx=idx, **kwargs)
-
             self.windows.append(window)
-            self._adjust_kappa()
 
+            self._adjust_kappa()
             self.windows.calculate_overlap(idx0=idx-1, idx1=idx)
 
             ref = self._calculate_next_ref(idx=idx, s_target=s_target)
             idx += 1
 
+        self.windows.plot_overlaps()
         self.windows.plot_discrepancy()
         self.windows.plot_histogram()
 
