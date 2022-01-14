@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from adaptiveus.log import logger
+from adaptiveus.overlap import calculate_overlaps
 from scipy.optimize import curve_fit
 from typing import Optional, Sequence
 if 'paper' in plt.style.available:
@@ -64,17 +65,13 @@ class Windows(list):
     def zeta_refs(self) -> Optional[np.ndarray]:
         """
         Array of ζ_ref for each window
-
-        -----------------------------------------------------------------------
-        Returns:
-            (np.ndarray(float) | None):
         """
         if len(self) == 0:
             return None
 
         return np.array([window.zeta_ref for window in self])
 
-    def _get_fitted_window_from_index(self, idx):
+    def _get_fitted_window_from_index(self, idx) -> 'Window':
         """
         Returns the window associated with the specified index and fits a
         Gaussian to this window data
@@ -91,44 +88,44 @@ class Windows(list):
 
     def calculate_overlap(self, idx0: int, idx1: int) -> None:
         """
-        Calculates the overlap between two specified windows. Returns the
-        minimum overlap of both normalised overlaps.
+        Calculates the overlap between two specified windows. Sets the LHS and
+        RHS normalised overlap for the two windows
         """
 
         window_a = self._get_fitted_window_from_index(idx0)
         window_b = self._get_fitted_window_from_index(idx1)
 
-        overlap = Overlap(window_a.gaussian.params, window_b.gaussian.params)
-        overlaps = overlap.calculate_overlap()
+        overlaps = calculate_overlaps(window_a.gaussian,
+                                      window_b.gaussian)
 
-        window_a.overlaps[1] = overlaps[0]
-        window_b.overlaps[0] = overlaps[1]
+        window_a.rhs_overlap = overlaps[0]
+        window_b.lhs_overlap = overlaps[1]
 
-        # window.overlap.lhs
-        # Turn overlap class into one function in overlap.py
-
-        return NotImplementedError
+        return None
 
     def plot_overlaps(self) -> None:
         """Plots the overlap as a function of window number"""
 
-        # Needs a test
-        if not any([window.overlaps for window in self]):
-            raise AssertionError('Cannot plot overlaps. '
-                                 'Please set window.overlaps')
+        # Closes any matplotlib plots that are still open
+        plt.close()
 
-        overlaps = [window.overlaps for window in self]
+        if not any([window.lhs_overlap for window in self]) or not any(
+                [window.rhs_overlap for window in self]):
+            raise AssertionError('Cannot plot overlaps. Please set at least '
+                                 'window.rhs_overlap or window.lhs_overlap')
+
+        lhs_overlaps = [window.lhs_overlap for window in self]
+        rhs_overlaps = [window.rhs_overlap for window in self]
+
+        # Ensures each x-value matches its window index
         x_vals = [window.window_n for window in self]
-
-        lhs_overlaps = [overlaps[i][0] for i in range(len(self))]
-        rhs_overlaps = [overlaps[i][1] for i in range(len(self))]
 
         plt.plot(x_vals, rhs_overlaps, marker='o', color='r', linestyle='--',
                  markersize=7, mfc='white', label='RHS Overlap')
         plt.plot(x_vals, lhs_overlaps, marker='o', color='b', linestyle='--',
                  markersize=7, mfc='white', label='LHS Overlap')
 
-        plt.axhline(0.3, linestyle='dotted', label='Threshold', color='k',
+        plt.axhline(0.2, linestyle='dotted', label='Threshold', color='k',
                     alpha=0.8)
 
         plt.xlabel('Window index')
@@ -139,10 +136,12 @@ class Windows(list):
         plt.savefig('overlap.pdf')
         plt.close()
 
-        return NotImplementedError
+        return None
 
     def plot_discrepancy(self) -> None:
         """Plots the discrepancy (D = |mean - ref|) for all windows"""
+        plt.close()
+
         if len(self) == 0:
             raise ValueError("No windows are loaded")
 
@@ -232,15 +231,15 @@ class Window:
         self.kappa = kappa
 
         self.obs_zetas:  Optional[list] = []
-        self.gaussian = _Gaussian()
+        self.gaussian = Gaussian()
 
-        self.overlaps = [None, None]
+        self.lhs_overlap, self.rhs_overlap = None, None
 
     def __str__(self):
         return f'window_{self.window_n}'
 
     @property
-    def discrepancy(self):
+    def discrepancy(self) -> float:
         """
         Calculates the discrepancy for current window.
         D = |mean - ref|
@@ -262,14 +261,14 @@ class Window:
     def window_range(self) -> np.ndarray:
         """An extended array of the window range for plotting"""
         x_range = abs(max(self.obs_zetas) - min(self.obs_zetas))
-        min_x = min(self.obs_zetas) - 0.1 * x_range
-        max_x = max(self.obs_zetas) + 0.1 * x_range
+
+        min_x = min(self.obs_zetas) - 0.25 * x_range
+        max_x = max(self.obs_zetas) + 0.25 * x_range
 
         return np.linspace(min_x, max_x, 500)
 
     def fit_gaussian(self) -> None:
         """Fits Gaussian parameters to the window data"""
-
         if len(self.obs_zetas) == 0:
             raise ValueError("Not observed zetas. Is the data loaded?")
 
@@ -277,20 +276,33 @@ class Window:
 
         return None
 
+    @staticmethod
+    def _powspace(start, stop, power, num) -> np.ndarray:
+        """
+        Returns values spaced according to the power specified.
+        E.g., start = 0, stop = 100, power = 2, num = 11:
+              returns 0, 1, 4, 9,..., 100
+        """
+
+        start = np.power(start, 1 / float(power))
+        stop = np.power(stop, 1 / float(power))
+
+        return np.power(np.linspace(start, stop, num=num), power).astype(int)
+
     def _get_fractional_data(self) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
-
         if len(self.obs_zetas) == 0:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
-        data_intervals = np.linspace(self.number_of_samples / 10,
-                                     self.number_of_samples, 10,
-                                     dtype=int)
+        data_intervals = self._powspace(self.number_of_samples / 10,
+                                        self.number_of_samples,
+                                        power=100,
+                                        num=10)
 
-        return [self.obs_zetas[:frac] for frac in data_intervals]
+        return [self.obs_zetas[:interval] for interval in data_intervals]
 
-    def _plot_gaussian_convergence(self, gaussians):
+    def _plot_gaussian_convergence(self, gaussians) -> None:
         """
         Plots the histogram data and Gaussians fitted to 10% incremements
         of the window trajectory
@@ -314,18 +326,21 @@ class Window:
 
         return None
 
-    def _plot_param_convergence(self, b_data, c_data):
+    def _plot_param_convergence(self, b_data, c_data) -> None:
         """Plots the mean and standard deviation as a fraction of the traj"""
 
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
-        # Plot on a log scale?
-        b_param_plt = ax1.plot(np.linspace(0.1, 1, 10), b_data,
+        fractions = self._powspace(self.number_of_samples / 10,
+                                   self.number_of_samples,
+                                   power=10, num=10) / self.number_of_samples
+
+        b_param_plt = ax1.plot(fractions, b_data,
                                linestyle='--', markersize=7, marker='o',
                                mfc='white', color='k', label='Mean')
 
-        c_param_plt = ax2.plot(np.linspace(0.1, 1, 10), c_data,
+        c_param_plt = ax2.plot(fractions, c_data,
                                linestyle='--', markersize=7, marker='o',
                                mfc='white', color='b',
                                label='Standard deviation')
@@ -337,23 +352,21 @@ class Window:
         ax1.set_xlabel('Fraction of window trajectory')
         ax1.set_ylabel('Mean / Å')
         ax1.set_xlim(0)
-        # ax1.set_ylim(min(b_data) - 0.1 * min(b_data),
-        #              max(b_data) + 0.1 * max(b_data))
 
         ax2.set_ylabel('Standard deviation / Å')
-        # ax2.set_ylim(min(c_data) - 0.1 * min(c_data),
-        #              max(c_data) + 0.1 * max(c_data))
 
         plt.tight_layout()
         plt.savefig(f'param_conv_{self.window_n}.pdf')
         plt.close()
+
+        return None
 
     def _fractional_gaussians(self, data) -> list:
         """Fits and plots Gaussians at fractions of the data"""
 
         gaussians = []
         for subdata in data:
-            gaussian = _Gaussian()
+            gaussian = Gaussian()
             gaussian.fit(subdata)
             gaussians.append(gaussian)
 
@@ -375,7 +388,8 @@ class Window:
 
         return False
 
-    def gaussian_converged(self, b_threshold=0.05, c_threshold=0.01) -> bool:
+    def gaussian_converged(self, b_threshold: float = 0.05,
+                           c_threshold: float = 0.01) -> bool:
         """
         Returns True if both b and c parameters of the Gaussian have
         converged. Plots b and c parameters along the trajectory
@@ -383,8 +397,7 @@ class Window:
         fractional_data = self._get_fractional_data()
         fractional_gaussians = self._fractional_gaussians(fractional_data)
 
-        # Set threshold based on expected SD and fraction along RC for mean
-
+        # Set threshold based on expected SD and fraction along coord for mean
         b_params = [gaussian.mean for gaussian in fractional_gaussians]
         b_converged = self._parameter_converged(b_params,
                                                 threshold=b_threshold)
@@ -399,12 +412,27 @@ class Window:
 
     def bins_converged(self):
         """Tests the convergence of the bin heights relative to previous
-        using an autocorrelation function"""
-
+        bins"""
         return NotImplementedError
 
 
-class _Gaussian:
+def area(gaussian) -> float:
+    """
+    Returns integral of Gaussian between -∞ and ∞:
+
+    I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
+    """
+    a, _, c = gaussian.params
+
+    return a * c * (2 * np.pi)**0.5
+
+
+def value(x, a, b, c) -> float:
+    """Value of the Gaussian at point x"""
+    return a * np.exp(-(x - b)**2 / (2. * c**2))
+
+
+class Gaussian:
     """Gaussian function fit to a set of data"""
 
     def __init__(self,
@@ -421,31 +449,19 @@ class _Gaussian:
 
     @property
     def mean(self) -> float:
+        """Mean of the Gaussian"""
         return self.params[1]
 
     @property
     def std(self) -> float:
+        """Standard deviation of the Gaussian"""
         return self.params[2]
 
-    @property
-    def area(self) -> float:
-        """
-        Returns integral of Gaussian between -∞ and ∞:
-
-        I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
-        """
-        assert all(self.params)
-        return self.params[0] * self.params[2] * (2 * np.pi)**0.5
-
-    def __call__(self, x):
+    def __call__(self, x) -> float:
         """Returns y-value of Gaussian given input parameters and x-value"""
 
         assert all(self.params)
-        return self.value(x, *self.params)
-
-    @staticmethod
-    def value(x, a, b, c):
-        return a * np.exp(-(x - b)**2 / (2. * c**2))
+        return value(x, *self.params)
 
     def fit(self, data) -> None:
         """Fit a Gaussian to a set of data"""
@@ -455,7 +471,7 @@ class _Gaussian:
 
         initial_guess = [1.0, 1.0, 1.0]
         try:
-            self.params, _ = curve_fit(self.value, bin_centres, hist,
+            self.params, _ = curve_fit(value, bin_centres, hist,
                                        p0=initial_guess,
                                        maxfev=10000)
 
