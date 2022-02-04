@@ -125,7 +125,7 @@ class Windows(list):
         plt.plot(x_vals, lhs_overlaps, marker='o', color='b', linestyle='--',
                  markersize=7, mfc='white', label='LHS Overlap')
 
-        plt.axhline(0.2, linestyle='dotted', label='Threshold', color='k',
+        plt.axhline(0.1, linestyle='dotted', label='Threshold', color='k',
                     alpha=0.8)
 
         plt.xlabel('Window index')
@@ -230,6 +230,10 @@ class Window:
         self.zeta_ref = zeta_ref
         self.kappa = kappa
 
+        self.bias_energies: Optional[np.ndarray] = None
+        self.hist:          Optional[np.ndarray] = None
+        self.free_energy = 0.0
+
         self.obs_zetas:  Optional[list] = []
         self.gaussian = Gaussian()
 
@@ -266,6 +270,33 @@ class Window:
         max_x = max(self.obs_zetas) + 0.25 * x_range
 
         return np.linspace(min_x, max_x, 500)
+
+    @property
+    def n(self) -> int:
+        """Number of samples in this window"""
+        if self.hist is None:
+            raise ValueError('Cannot determine the number of samples - '
+                             'window has not been binned')
+
+        return int(np.sum(self.hist))
+
+    def bin(self,
+            zetas: np.ndarray) -> None:
+        """
+        Bin the observed reaction coordinates in this window into an a set of
+        bins, defined by the array of bin centres (zetas)
+
+        -----------------------------------------------------------------------
+        Arguments:
+            zetas: Discretized reaction coordinate
+        """
+
+        bins = np.linspace(zetas[0], zetas[-1], num=len(zetas)+1)
+        self.hist, _ = np.histogram(self.obs_zetas, bins=bins)
+
+        self.bias_energies = (self.kappa/2) * (zetas - self.zeta_ref)**2
+
+        return None
 
     def fit_gaussian(self) -> None:
         """Fits Gaussian parameters to the window data"""
@@ -398,6 +429,7 @@ class Window:
         fractional_gaussians = self._fractional_gaussians(fractional_data)
 
         # Set threshold based on expected SD and fraction along coord for mean
+        # Note the parameter convergence using the logarthmic data
         b_params = [gaussian.mean for gaussian in fractional_gaussians]
         b_converged = self._parameter_converged(b_params,
                                                 threshold=b_threshold)
@@ -427,7 +459,7 @@ def area(gaussian) -> float:
     return a * c * (2 * np.pi)**0.5
 
 
-def value(x, a, b, c) -> float:
+def gaussian_value(x, a, b, c) -> float:
     """Value of the Gaussian at point x"""
     return a * np.exp(-(x - b)**2 / (2. * c**2))
 
@@ -461,7 +493,7 @@ class Gaussian:
         """Returns y-value of Gaussian given input parameters and x-value"""
 
         assert all(self.params)
-        return value(x, *self.params)
+        return gaussian_value(x, *self.params)
 
     def fit(self, data) -> None:
         """Fit a Gaussian to a set of data"""
@@ -471,11 +503,11 @@ class Gaussian:
 
         initial_guess = [1.0, 1.0, 1.0]
         try:
-            self.params, _ = curve_fit(value, bin_centres, hist,
+            self.params, _ = curve_fit(gaussian_value, bin_centres, hist,
                                        p0=initial_guess,
                                        maxfev=10000)
 
-            # c parameter is always non-negative
+            # c parameter is always positive
             self.params[2] = abs(self.params[2])
 
         except RuntimeError:

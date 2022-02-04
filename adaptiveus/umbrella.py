@@ -1,12 +1,16 @@
 import mltrain.sampling.md
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+from mpl_toolkits.mplot3d import art3d
 from multiprocessing import Pool
-from scipy import special, optimize
+from scipy import special, optimize, interpolate
 from adaptiveus.log import logger
 from adaptiveus.adaptive import Windows
 from adaptiveus.config import Config
 from mltrain.sampling.umbrella import UmbrellaSampling as MltrainUS
-from typing import Optional, Callable
+from mltrain.sampling.bias import Bias
+from typing import Optional, Callable, Tuple
 from copy import deepcopy
 
 
@@ -60,6 +64,8 @@ class UmbrellaSampling:
         self.traj = traj        # Only mltrain trajectories implemented
 
         self.kappa:             float = kappa
+        self.default_kappa:     float = kappa
+
         self.temp:              float = temp
         self.interval:          int = interval
         self.dt:                float = dt
@@ -152,11 +158,227 @@ class UmbrellaSampling:
 
         return converged
 
-    def _calculate_free_energy(self):
-        return NotImplementedError
+    def calculate_free_energy(self, n_bins: int = 100
+                              ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calculate the free energy using the default method specified by the
+        driver
+        """
 
-    def _adjust_kappa(self):
-        return NotImplementedError
+        zetas = np.linspace(self.init_ref, self.final_ref, num=n_bins)
+
+        if isinstance(self.driver, mltrain.potentials._base.MLPotential):
+
+            adaptive = MltrainAdaptive(zeta_func=self.zeta_func,
+                                       kappa=self.kappa,
+                                       temp=self.temp,
+                                       interval=self.interval,
+                                       dt=self.dt)
+
+            free_energies = adaptive.calculate_free_energy(self.windows, zetas)
+
+        else:
+            return NotImplementedError
+
+        return free_energies
+
+    def _calculate_pot_energy(self):
+        """"""
+        if isinstance(self.driver, mltrain.potentials._base.MLPotential):
+
+            self.driver.predict(self.traj)
+            energies = [config.energy.predicted for config in self.traj]
+
+        else:
+            raise NotImplementedError
+
+        return [energies[i] - min(energies) for i in range(len(energies))]
+
+    def _calculate_bias_along_coord(self, kappa, ref):
+        """"""
+        bias = Bias(self.zeta_func, kappa=kappa, reference=ref)
+        bias = bias(self.traj)
+
+        return bias
+
+    @staticmethod
+    def _add_point(ax, x, y, z, fc='red', ec='red', radius=0.01) -> None:
+        """Add a point onto a 3D surface for plotting"""
+
+        xy_len, z_len = ax.get_figure().get_size_inches()
+        axis_length = [x[1] - x[0] for x in
+                       [ax.get_xbound(), ax.get_ybound(), ax.get_zbound()]]
+
+        axis_rotation = {
+            'y': ((x, z, y),
+                  axis_length[2] / axis_length[0] * xy_len / z_len)}
+
+        for a, ((x0, y0, z0), ratio) in axis_rotation.items():
+            p = Circle((x0, y0), radius, fc=fc, ec=ec, linewidth=0.1)
+            ax.add_patch(p)
+            art3d.pathpatch_2d_to_3d(p, z=z0, zdir=a)
+
+        return None
+
+    @staticmethod
+    def _idxs_at_edge(z, idx) -> bool:
+        """Checks if idx is at the edge of z"""
+        if idx == 0 or idx == len(z) - 1:
+            return False
+        else:
+            return True
+
+    def _plot_2d_total_energy(self, x, y, z, ref) -> None:
+        """
+        Plots a 2D surface of the bias energy + potential energy for a given
+        reference value. Annotes the minima on the surface
+        """
+        plt.close()
+        fig = plt.figure()
+        ax = fig.add_subplot(projection='3d')
+        cmap = plt.cm.get_cmap('plasma')
+
+        x_grid, y_grid = np.meshgrid(x, y)
+        ax.plot_surface(x_grid, y_grid, z, cmap=cmap, linewidth=0,
+                        antialiased=False)
+
+        for i in range(len(y_grid)):
+            grad = np.gradient(z[i])
+            # Get the indexes where the sign change
+            idxs = np.where(np.diff(np.sign(grad)) != 0)[0] + 1
+
+            minima_idxs = []
+            for idx in idxs:
+                if not self._idxs_at_edge(z[i], idx):
+                    if (z[i][idx - 1] and z[i][idx + 1]) > z[i][idx]:
+                        minima_idxs.append(idx)
+
+            for idx in minima_idxs:
+                self._add_point(ax, x[idx], y_grid[i][0], z[i][idx])
+
+            reference_idx = (np.abs(x - ref)).argmin()
+            self._add_point(ax, ref, y_grid[i][0], z[i][reference_idx], fc='w',
+                            ec='w')
+
+        ax.set_xlabel('Reaction coordinate / Å')
+        ax.set_ylabel(r'$\kappa~/~eV Å^{-2}$')
+        ax.set_zlabel('Total energy / eV')
+
+        plt.savefig('2d_total_energy.pdf')
+        plt.close()
+
+        return None
+
+    @staticmethod
+    def _plot_1d_total_energy(x, bias_e, pot_e, total_e, ref, k_idx) -> None:
+        """
+        Plots the bias energy, potential energy and total energy for a given
+        kappa and reference value. Annotes the minima on the curve
+        """
+        plt.close()
+        cmap = plt.cm.get_cmap('plasma')
+
+        grad = np.gradient(total_e[k_idx])
+        # Get the indexes where the sign changes
+        idxs = np.where(np.diff(np.sign(grad)) != 0)[0] + 1
+
+        minima_idxs = []
+        for idx in idxs:
+            if (total_e[k_idx][idx-1] and total_e[k_idx][idx+1]) > total_e[k_idx][idx]:
+                minima_idxs.append(idx)
+
+        plt.plot(x, pot_e, label='Potential energy', color=cmap(0.1))
+        plt.plot(x, bias_e[k_idx], label='Bias energy', color=cmap(0.3))
+        plt.plot(x, total_e[k_idx], label='Total energy', color=cmap(0.7))
+
+        for idx in minima_idxs:
+            plt.plot(x[idx], total_e[k_idx][idx], label='Minima', c='None',
+                     marker='o', markerfacecolor='None', markeredgecolor='red',
+                     markeredgewidth=1)
+
+        reference_idx = (np.abs(x - ref)).argmin()
+
+        plt.plot(ref, total_e[k_idx][reference_idx], label='Reference',
+                 c='None', marker='o', markerfacecolor='None',
+                 markeredgecolor='k', markeredgewidth=1)
+
+        plt.xlabel('Reaction coordinate / Å')
+        plt.ylabel('Energy / eV')
+        plt.legend()
+
+        plt.savefig('1d_total_energy.pdf')
+        plt.close()
+
+        return None
+
+    def _adjust_kappa(self, ref, kappa_threshold=0.025) -> None:
+        """
+        Adjusts the value of kappa based the prediction of the sum of the
+        bias energy and potential energy
+        """
+
+        kappas = np.linspace(0, self.default_kappa, num=30)
+        xi = self.zeta_func(self.traj)
+        xi_extended = np.linspace(min(xi), max(xi), 100)
+
+        xs, ys = np.meshgrid(xi, kappas)
+
+        pot_energy = self._calculate_pot_energy()
+        pot_energy = interpolate.interp1d(xi[::3], pot_energy[::3],
+                                          kind='cubic',
+                                          fill_value='extrapolate'
+                                          )(xi_extended)
+
+        bias_energy = self._calculate_bias_along_coord(kappa=ys, ref=ref)
+        bias_energy = interpolate.interp1d(xi,
+                                           bias_energy,
+                                           kind='quadratic'
+                                           )(xi_extended)
+
+        total_energy = bias_energy + pot_energy
+        total_energy = [interpolate.interp1d(xi_extended[::3],
+                                             total_energy[i][::3],
+                                             fill_value='extrapolate',
+                                             kind='cubic'
+                                             )(xi_extended) for i in range(len(total_energy))]
+
+        total_energy = np.asarray(total_energy)
+
+        self._plot_2d_total_energy(xi_extended, kappas, total_energy, ref)
+
+        for i, kappa in enumerate(kappas):
+            grad = np.gradient(total_energy[i])
+
+            # Get the indexes where the sign change
+            idxs = np.where(np.diff(np.sign(grad)) != 0)[0] + 1
+
+            minima_idxs = []
+            for idx in idxs:
+                if (total_energy[i][idx - 1] and total_energy[i][idx + 1]) > total_energy[i][idx]:
+                    minima_idxs.append(idx)
+
+            if i == len(kappas) - 1:
+                self.kappa = self.default_kappa
+                self._plot_1d_total_energy(xi_extended,
+                                           bias_energy,
+                                           pot_energy,
+                                           total_energy,
+                                           ref,
+                                           k_idx=i)
+
+            elif len(minima_idxs) == 1:
+                if abs(xi_extended[minima_idxs[0]] - ref) < kappa_threshold:
+
+                    self.kappa = kappa
+                    self._plot_1d_total_energy(xi_extended,
+                                               bias_energy,
+                                               pot_energy,
+                                               total_energy,
+                                               ref,
+                                               k_idx=i)
+                    break
+
+        return None
 
     def run_non_adaptive_sampling(self,
                                   n_windows: Optional[int] = 10,
@@ -226,23 +448,25 @@ class UmbrellaSampling:
 
         ref = self._calculate_next_ref(idx=0, s_target=s_target)
 
-        idx, ref = 1, ref
-        while ref <= self.final_ref:
+        with open('parameters.txt', 'w') as outfile:
+            idx, ref = 1, ref
+            while ref <= self.final_ref:
 
-            window = self._run_single_window(ref=ref, idx=idx, **kwargs)
-            self.windows.append(window)
+                window = self._run_single_window(ref=ref, idx=idx, **kwargs)
+                self.windows.append(window)
 
-            self._adjust_kappa()
-            self.windows.calculate_overlap(idx0=idx-1, idx1=idx)
+                self._adjust_kappa(ref)
+                self.windows.calculate_overlap(idx0=idx-1, idx1=idx)
 
-            ref = self._calculate_next_ref(idx=idx, s_target=s_target)
-            idx += 1
+                ref = self._calculate_next_ref(idx=idx, s_target=s_target)
+
+                print(f'{self.kappa} {ref}', file=outfile)
+
+                idx += 1
 
         self.windows.plot_overlaps()
         self.windows.plot_discrepancy()
         self.windows.plot_histogram()
-
-        self._calculate_free_energy()
 
         return None
 
@@ -341,3 +565,18 @@ class MltrainAdaptive:
                 print(line.strip('\n'), file=outfile)
 
         return None
+
+    def calculate_free_energy(self, windows, zetas
+                              ) -> Tuple[np.ndarray, np.ndarray]:
+        """Calculate the free energy using WHAM in mltrain"""
+
+        umbrella = MltrainUS(zeta_func=self.zeta_func,
+                             kappa=self.kappa,
+                             temp=self.temp)
+
+        [window.bin(zetas=zetas) for window in windows]
+        umbrella.windows = windows
+
+        free_energies = umbrella.wham()
+
+        return free_energies
