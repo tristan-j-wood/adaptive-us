@@ -1,129 +1,105 @@
-import numpy as np
-import pytest
-import adaptiveus as adp
-from adaptiveus.adaptive import Gaussian
 import os
+import mltrain as mlt
+import adaptiveus as adp
+import numpy as np
+from adaptiveus.umbrella import UmbrellaSampling
+from mltrain.sampling.reaction_coord import AverageDistance
 from adaptiveus.utils import work_in_zipped_dir
 here = os.path.abspath(os.path.dirname(__file__))
-
-
-def test_empty_window():
-
-    adaptive = adp.adaptive.Windows()
-
-    # Window class should contain no windows
-    assert not len(adaptive)
-
-    with pytest.raises(ValueError):
-        adaptive.plot_histogram()
-
-    # Add empty window to Windows
-    tmp_window = adp.adaptive.Window()
-    adaptive.append(tmp_window)
-
-    assert len(adaptive)
-
-    with pytest.raises(ValueError):
-        adaptive.plot_histogram()
-
-    # All attributes should be None when no data is loaded
-    for window in adaptive:
-        assert window.window_n is None
-        assert window.zeta_ref is None
-        assert window.kappa is None
-        assert not len(window.obs_zetas)
-
-        assert isinstance(window.gaussian, Gaussian)
+adp.Config.n_cores = 4
 
 
 @work_in_zipped_dir(os.path.join(here, 'data.zip'))
-def test_loaded_window():
+def load_files():
 
-    adaptive = adp.adaptive.Windows()
-    [adaptive.load(f'data_{i}.txt') for i in range(4)]
+    # Load in mltrain files
+    trajectory = mlt.ConfigurationSet()
+    trajectory.load_xyz(filename='rxn_coord.xyz', charge=-1, mult=1)
+    trajectory[0].save_xyz(filename='init.xyz')
+    system = mlt.System(mlt.Molecule('init.xyz', charge=-1, mult=1),
+                        box=[10, 10, 10])
+    potential = mlt.potentials.GAP('potential', system=system)
 
-    # Gaussians are not fitted until requested so all parameters are None
-    for window in adaptive:
-        assert not all(window.gaussian.params)
+    return trajectory, potential
 
-    # All windows should be plotted
-    adaptive.plot_histogram()
-    assert os.path.exists('window_histogram.pdf')
 
-    # Only window 6 should be plotted (which is the first loaded window)
-    adaptive.plot_histogram(indexes=[0])
-    assert os.path.exists('window_histogram_3.pdf')
-
-    # IndexError raised if indices are specified which are not in Windows
-    with pytest.raises(IndexError):
-        adaptive.plot_histogram(indexes=[1, 6])
-
-    with pytest.raises(ValueError):
-        adaptive.load('data_0.txt')
-
-    # Incorrectly formatted files should raise a ValueError
-    adaptive = adp.adaptive.Windows()
-    with pytest.raises(ValueError):
-        adaptive.load(filename='bad_data.txt')
+traj, gap = load_files()
 
 
 @work_in_zipped_dir(os.path.join(here, 'data.zip'))
-def test_gaussian():
+def test_mltrain_non_adaptive():
 
-    adaptive = adp.adaptive.Windows()
-    adaptive.load(f'data_0.txt')
+    # Initialise UmbrellaSampling class
+    adaptive = UmbrellaSampling(traj=traj,
+                                driver=gap,
+                                zeta_func=AverageDistance([0, 1]),
+                                kappa=100,
+                                temp=300,
+                                interval=5,
+                                init_ref=2,
+                                final_ref=2.1,
+                                dt=0.5)
 
-    window = adaptive[0]
-    assert not all(window.gaussian.params)
+    assert adaptive.zeta_func is not None
+    assert adaptive.driver is not None
 
-    # Fit a Gaussian to the real data
-    window.fit_gaussian()
-    assert all(window.gaussian.params)
+    # Run umbrella sampling without any adaptive and convergence testing
+    adaptive.run_non_adaptive_sampling(n_windows=5,
+                                       fs=2000)
 
-    # Set up a toy Gaussian
-    window.gaussian.params = 1, 1, 1
+    assert os.path.exists('param_conv_0.pdf')
+    assert os.path.exists('gaussian_conv_0.pdf')
 
-    # Area of this Gaussian should be √(2π)
-    assert np.isclose(np.sqrt(2*np.pi), adp.adaptive.area(window.gaussian))
+    assert adaptive.windows[1].lhs_overlap is not None
+    assert adaptive.windows[1].rhs_overlap is not None
 
-    # Value of the Gaussian at x = 3 should be the following
-    assert np.isclose(window.gaussian(3), 0.1353352832)
+    assert len(adaptive.windows) == 10
 
+    assert os.path.exists('overlap.pdf')
+    assert os.path.exists('window_histograms.pdf')
+    assert os.path.exists('discrepancy.pdf')
 
-@work_in_zipped_dir(os.path.join(here, 'data.zip'))
-def test_convergence():
-
-    adaptive = adp.adaptive.Windows()
-    adaptive.load(f'data_0.txt')
-    window = adaptive[0]
-
-    window.gaussian_converged()
-    assert os.path.exists(f'param_conv_3.pdf')
-    assert os.path.exists(f'gaussian_conv_3.pdf')
-
-    # Parameters should not converge with an impossible threshold
-    converged = window.gaussian_converged(b_threshold=0, c_threshold=0)
-    assert not converged
-
-    # Parameters should converged with an excess threshold
-    converged = window.gaussian_converged(b_threshold=1000, c_threshold=1000)
-    assert converged
+    adaptive.calculate_free_energy()
 
 
 @work_in_zipped_dir(os.path.join(here, 'data.zip'))
-def test_discrepancy():
+def test_mltrain_adaptive():
 
-    adaptive = adp.adaptive.Windows()
+    # Initialise UmbrellaSampling class
+    adaptive = UmbrellaSampling(traj=traj,
+                                driver=gap,
+                                zeta_func=AverageDistance([0, 1]),
+                                kappa=100,
+                                temp=300,
+                                interval=5,
+                                dt=0.5,
+                                init_ref=2,
+                                final_ref=2.1)
 
-    # Discrepancy should fail if data hasn't been loaded
-    for window in adaptive:
-        with pytest.raises(ValueError):
-            _ = window.discrepancy
+    # Run umbrella sampling without any adaptive and convergence testing
+    adaptive.run_adaptive_sampling(fs=2000)
 
-    # Plotting should fail if data hasn't been loaded
-    with pytest.raises(ValueError):
-        adaptive.plot_discrepancy()
+    assert adaptive.windows[1].zeta_ref is not None
+    assert len(adaptive.windows) > 0
 
-    [adaptive.load(f'data_{i}.txt') for i in range(4)]
+    assert os.path.exists('overlap.pdf')
+    assert os.path.exists('window_histograms.pdf')
+    assert os.path.exists('discrepancy.pdf')
 
-    adaptive.plot_discrepancy()
+
+def test_overlap_error_func():
+
+    # Initialise UmbrellaSampling class
+    adaptive = UmbrellaSampling(traj=traj,
+                                driver=gap,
+                                zeta_func=AverageDistance([0, 1]),
+                                kappa=100,
+                                temp=300,
+                                interval=5,
+                                dt=0.5,
+                                init_ref=2,
+                                final_ref=2.1)
+
+    # Output of this function with these parameters should be zero
+    output = adaptive._overlap_error_func(x=1.135, s=0.5, b=1, c=0.1)
+    assert np.isclose(output, 0, atol=1e-3)

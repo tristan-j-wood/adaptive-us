@@ -82,11 +82,13 @@ class UmbrellaSampling:
         """
         return self.zeta_func(self.traj[idx]) if ref is None else ref
 
-    def _run_single_window(self, ref, idx, **kwargs
-                           ) -> 'adaptiveus.adaptive.window':
+    def _run_single_window(self,
+                           ref,
+                           idx,
+                           **kwargs) -> 'adaptiveus.adaptive.window':
         """Run a single umbrella sampling window using a specified method"""
-
         if isinstance(self.driver, mltrain.potentials._base.MLPotential):
+
             adaptive = MltrainAdaptive(zeta_func=self.zeta_func,
                                        kappa=self.kappa,
                                        temp=self.temp,
@@ -114,7 +116,6 @@ class UmbrellaSampling:
 
         2S - 2 - erf((b - A) / c √2) + erf((x - A) / c √2) = 0
         """
-
         int_func = (x**2 - b**2) / (2 * x - 2 * b)
 
         erf_1 = special.erf((b - int_func) / (c * np.sqrt(2)))
@@ -127,7 +128,6 @@ class UmbrellaSampling:
         Finds b value of the Gaussian with fixed a and c parameters which
         gives an overlap equal to the target overlap
         """
-
         b, c = params[1], params[2]
         inital_guess = b * 1.01  # Avoids dividing by zero
 
@@ -140,7 +140,6 @@ class UmbrellaSampling:
 
     def _calculate_next_ref(self, idx, s_target) -> float:
         """Calculate the next reference point based on a target overlap"""
-
         window = self.windows[idx]
         window.fit_gaussian()
 
@@ -152,8 +151,8 @@ class UmbrellaSampling:
     def _test_convergence(self, ref, **kwargs) -> bool:
         """Test the convergence of a fitted Gaussian over a simulation"""
         window = self._run_single_window(ref=ref, idx=0, **kwargs)
-        self.windows.append(window)
 
+        self.windows.append(window)
         converged = window.gaussian_converged()
 
         return converged
@@ -164,7 +163,6 @@ class UmbrellaSampling:
         Calculate the free energy using the default method specified by the
         driver
         """
-
         zetas = np.linspace(self.init_ref, self.final_ref, num=n_bins)
 
         if isinstance(self.driver, mltrain.potentials._base.MLPotential):
@@ -178,12 +176,15 @@ class UmbrellaSampling:
             free_energies = adaptive.calculate_free_energy(self.windows, zetas)
 
         else:
-            return NotImplementedError
+            raise NotImplementedError
 
         return free_energies
 
-    def _calculate_pot_energy(self):
-        """"""
+    def _calculate_pot_energy(self) -> list:
+        """
+        Calculates the potential energy for configurations in a trajectory
+        using the specified driver
+        """
         if isinstance(self.driver, mltrain.potentials._base.MLPotential):
 
             self.driver.predict(self.traj)
@@ -194,8 +195,8 @@ class UmbrellaSampling:
 
         return [energies[i] - min(energies) for i in range(len(energies))]
 
-    def _calculate_bias_along_coord(self, kappa, ref):
-        """"""
+    def _calculate_bias_along_coord(self, kappa, ref) -> float:
+        """Calculates the bias energy for configurations in a trajectory"""
         bias = Bias(self.zeta_func, kappa=kappa, reference=ref)
         bias = bias(self.traj)
 
@@ -204,8 +205,8 @@ class UmbrellaSampling:
     @staticmethod
     def _add_point(ax, x, y, z, fc='red', ec='red', radius=0.01) -> None:
         """Add a point onto a 3D surface for plotting"""
-
         xy_len, z_len = ax.get_figure().get_size_inches()
+
         axis_length = [x[1] - x[0] for x in
                        [ax.get_xbound(), ax.get_ybound(), ax.get_zbound()]]
 
@@ -311,71 +312,86 @@ class UmbrellaSampling:
 
         return None
 
+    @staticmethod
+    def _interpolate(x_vals, y_vals, kind):
+        """Interpolates a function using scipy interp1d"""
+        interpolate_class = interpolate.interp1d(x_vals,
+                                                 y_vals,
+                                                 kind=kind)
+
+        return interpolate_class(np.linspace(min(x_vals), max(x_vals), 100))
+
+    def _calculate_and_plot_total_energy(self, xi, kappas, ref) -> np.ndarray:
+        """
+        Calculate the total energy from the sum of bias and potential energy.
+        Plot these energies in 1D and 2D
+        """
+
+        xi_interp = np.linspace(min(xi), max(xi), 100)
+        xs, ys = np.meshgrid(xi, kappas)
+
+        pot_energy = self._calculate_pot_energy()
+        pot_energy = self._interpolate(xi[::3], pot_energy[::3], kind='cubic')
+
+        bias_energy = self._calculate_bias_along_coord(kappa=ys, ref=ref)
+        bias_energy = self._interpolate(xi, bias_energy, kind='quadratic')
+
+        tot_energy = bias_energy + pot_energy
+        tot_energy = [self._interpolate(xi_interp[::3],
+                                        tot_energy[i][::3],
+                                        kind='cubic'
+                                        ) for i in range(len(tot_energy))]
+
+        tot_energy = np.asarray(tot_energy)
+
+        # Plot 1D total energy for the middle kappa
+        self._plot_1d_total_energy(xi_interp,
+                                   bias_energy,
+                                   pot_energy,
+                                   tot_energy,
+                                   ref,
+                                   k_idx=int(len(kappas)/2))
+
+        self._plot_2d_total_energy(xi_interp, kappas, tot_energy, ref)
+
+        return tot_energy
+
+    @staticmethod
+    def _get_minima_idxs(i, y_val):
+        """Find the indexes of the minima from a set of data"""
+        grad = np.gradient(y_val[i])
+        idxs = np.where(np.diff(np.sign(grad)) != 0)[0] + 1
+
+        minima_idxs = []
+        for idx in idxs:
+            if (y_val[i][idx - 1] and y_val[i][idx + 1]) > y_val[i][idx]:
+                minima_idxs.append(idx)
+
+        return minima_idxs
+
     def _adjust_kappa(self, ref, kappa_threshold=0.025) -> None:
         """
         Adjusts the value of kappa based the prediction of the sum of the
         bias energy and potential energy
         """
-
-        kappas = np.linspace(0, self.default_kappa, num=30)
         xi = self.zeta_func(self.traj)
-        xi_extended = np.linspace(min(xi), max(xi), 100)
+        kappas = np.linspace(0, self.default_kappa, num=30)
 
-        xs, ys = np.meshgrid(xi, kappas)
+        tot_energy = self._calculate_and_plot_total_energy(xi, kappas, ref)
 
-        pot_energy = self._calculate_pot_energy()
-        pot_energy = interpolate.interp1d(xi[::3], pot_energy[::3],
-                                          kind='cubic',
-                                          fill_value='extrapolate'
-                                          )(xi_extended)
-
-        bias_energy = self._calculate_bias_along_coord(kappa=ys, ref=ref)
-        bias_energy = interpolate.interp1d(xi,
-                                           bias_energy,
-                                           kind='quadratic'
-                                           )(xi_extended)
-
-        total_energy = bias_energy + pot_energy
-        total_energy = [interpolate.interp1d(xi_extended[::3],
-                                             total_energy[i][::3],
-                                             fill_value='extrapolate',
-                                             kind='cubic'
-                                             )(xi_extended) for i in range(len(total_energy))]
-
-        total_energy = np.asarray(total_energy)
-
-        self._plot_2d_total_energy(xi_extended, kappas, total_energy, ref)
-
+        xi_interp = np.linspace(min(xi), max(xi), 100)
         for i, kappa in enumerate(kappas):
-            grad = np.gradient(total_energy[i])
 
-            # Get the indexes where the sign change
-            idxs = np.where(np.diff(np.sign(grad)) != 0)[0] + 1
+            minima_idxs = self._get_minima_idxs(i, tot_energy)
 
-            minima_idxs = []
-            for idx in idxs:
-                if (total_energy[i][idx - 1] and total_energy[i][idx + 1]) > total_energy[i][idx]:
-                    minima_idxs.append(idx)
-
+            # Sets kappa to default value if no suitable kappa is found
             if i == len(kappas) - 1:
                 self.kappa = self.default_kappa
-                self._plot_1d_total_energy(xi_extended,
-                                           bias_energy,
-                                           pot_energy,
-                                           total_energy,
-                                           ref,
-                                           k_idx=i)
 
             elif len(minima_idxs) == 1:
-                if abs(xi_extended[minima_idxs[0]] - ref) < kappa_threshold:
-
+                if abs(xi_interp[minima_idxs[0]] - ref) < kappa_threshold:
                     self.kappa = kappa
-                    self._plot_1d_total_energy(xi_extended,
-                                               bias_energy,
-                                               pot_energy,
-                                               total_energy,
-                                               ref,
-                                               k_idx=i)
+
                     break
 
         return None
@@ -384,20 +400,17 @@ class UmbrellaSampling:
                                   n_windows: Optional[int] = 10,
                                   **kwargs) -> None:
         """
-        Run adaptive umbrella sampling for ml-train
+        Run non-adaptive umbrella sampling for ml-train
 
         -----------------------------------------------------------------------
         Arguments:
             n_windows: Number of windows to run umbrella sampling for
-
-            test_convergence: Test the convergence of the data in a window
 
         -------------------
         Keyword Arguments:
 
             {fs, ps, ns}: Simulation time in some units
         """
-
         refs = self._reference_values(n_windows)
         n_processes = min(len(refs)-1, Config.n_cores)
 
@@ -435,14 +448,11 @@ class UmbrellaSampling:
         Arguments:
             s_target: Target fractional overlap in adaptive sampling
 
-            test_convergence: Test the convergence of the data in a window
-
         -------------------
         Keyword Arguments:
 
             {fs, ps, ns}: Simulation time in some units
         """
-
         converged = self._test_convergence(ref=self.init_ref, **kwargs)
         logger.info(f'Gaussian parameters converged: {converged}')
 
@@ -499,7 +509,6 @@ class MltrainAdaptive:
 
             dt: (float) Time-step in fs
         """
-
         self.zeta_func:         Optional[Callable] = zeta_func
         self.kappa:             float = kappa
 
@@ -534,7 +543,6 @@ class MltrainAdaptive:
 
             {fs, ps, ns}: Simulation time in some units
         """
-
         umbrella = MltrainUS(zeta_func=self.zeta_func, kappa=self.kappa)
 
         umbrella.run_umbrella_sampling(traj=traj,
@@ -569,7 +577,6 @@ class MltrainAdaptive:
     def calculate_free_energy(self, windows, zetas
                               ) -> Tuple[np.ndarray, np.ndarray]:
         """Calculate the free energy using WHAM in mltrain"""
-
         umbrella = MltrainUS(zeta_func=self.zeta_func,
                              kappa=self.kappa,
                              temp=self.temp)

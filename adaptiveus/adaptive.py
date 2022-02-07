@@ -32,7 +32,6 @@ class Windows(list):
         Raises:
             (ValueError): If an unsupported file extension is present
         """
-
         if not filename.endswith('.txt'):
             raise ValueError(f"Cannot load {filename}. Must be an .txt file")
 
@@ -76,7 +75,6 @@ class Windows(list):
         Returns the window associated with the specified index and fits a
         Gaussian to this window data
         """
-
         try:
             window = next(window for window in self if window.window_n == idx)
         except StopIteration:
@@ -91,7 +89,6 @@ class Windows(list):
         Calculates the overlap between two specified windows. Sets the LHS and
         RHS normalised overlap for the two windows
         """
-
         window_a = self._get_fitted_window_from_index(idx0)
         window_b = self._get_fitted_window_from_index(idx1)
 
@@ -160,26 +157,16 @@ class Windows(list):
 
         return None
 
-    def plot_histogram(self, indexes: Optional[Sequence[int]] = None) -> None:
+    def plot_histogram(self) -> None:
         """
-        Plots observed reaction coordinates as a histogram for a set of
-        windows. If indexes is specified, only a subset of the windows will
-        be plotted. E.g., indexes=[0, 1] will plot the first and second windows
+        Plots observed reaction coordinates as a histogram for loaded windows.
         """
         plt.close()
 
-        if indexes is not None:
-            selected_windows = [self[i] for i in indexes]
-            file_ext = '_'.join(str(self[i].window_n) for i in indexes)
-            filename = f'window_histogram_{file_ext}.pdf'
-        else:
-            selected_windows = list(self)
-            filename = f'window_histogram.pdf'
-
-        if len(selected_windows) == 0:
+        if len(list(self)) == 0:
             raise ValueError("No windows to plot")
 
-        for window in selected_windows:
+        for window in list(self):
             if len(window.obs_zetas) == 0:
                 raise ValueError("Not observed zetas. Is the data loaded?")
 
@@ -198,7 +185,7 @@ class Windows(list):
         plt.ylabel('Frequency')
 
         plt.tight_layout()
-        plt.savefig(filename)
+        plt.savefig('window_histograms.pdf')
         plt.close()
 
         return None
@@ -266,6 +253,7 @@ class Window:
         """An extended array of the window range for plotting"""
         x_range = abs(max(self.obs_zetas) - min(self.obs_zetas))
 
+        # Extend the range by 25% so Gaussian tails are not excluded
         min_x = min(self.obs_zetas) - 0.25 * x_range
         max_x = max(self.obs_zetas) + 0.25 * x_range
 
@@ -280,8 +268,7 @@ class Window:
 
         return int(np.sum(self.hist))
 
-    def bin(self,
-            zetas: np.ndarray) -> None:
+    def bin(self, zetas: np.ndarray) -> None:
         """
         Bin the observed reaction coordinates in this window into an a set of
         bins, defined by the array of bin centres (zetas)
@@ -290,7 +277,6 @@ class Window:
         Arguments:
             zetas: Discretized reaction coordinate
         """
-
         bins = np.linspace(zetas[0], zetas[-1], num=len(zetas)+1)
         self.hist, _ = np.histogram(self.obs_zetas, bins=bins)
 
@@ -308,13 +294,12 @@ class Window:
         return None
 
     @staticmethod
-    def _powspace(start, stop, power, num) -> np.ndarray:
+    def _powerspace(start, stop, power, num) -> np.ndarray:
         """
         Returns values spaced according to the power specified.
         E.g., start = 0, stop = 100, power = 2, num = 11:
               returns 0, 1, 4, 9,..., 100
         """
-
         start = np.power(start, 1 / float(power))
         stop = np.power(stop, 1 / float(power))
 
@@ -326,19 +311,18 @@ class Window:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
-        data_intervals = self._powspace(self.number_of_samples / 10,
-                                        self.number_of_samples,
-                                        power=100,
-                                        num=10)
+        data_intervals = self._powerspace(self.number_of_samples / 10,
+                                          self.number_of_samples,
+                                          power=100,
+                                          num=10)
 
         return [self.obs_zetas[:interval] for interval in data_intervals]
 
     def _plot_gaussian_convergence(self, gaussians) -> None:
         """
-        Plots the histogram data and Gaussians fitted to 10% incremements
-        of the window trajectory
+        Plots the histogram data and Gaussians fitted to fractional
+        incremements of the window trajectory
         """
-
         for gaussian in gaussians:
             plt.plot(self.window_range, gaussian(self.window_range))
 
@@ -359,13 +343,12 @@ class Window:
 
     def _plot_param_convergence(self, b_data, c_data) -> None:
         """Plots the mean and standard deviation as a fraction of the traj"""
-
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
-        fractions = self._powspace(self.number_of_samples / 10,
-                                   self.number_of_samples,
-                                   power=10, num=10) / self.number_of_samples
+        fractions = self._powerspace(self.number_of_samples / 10,
+                                     self.number_of_samples,
+                                     power=10, num=10) / self.number_of_samples
 
         b_param_plt = ax1.plot(fractions, b_data,
                                linestyle='--', markersize=7, marker='o',
@@ -395,15 +378,16 @@ class Window:
     def _fractional_gaussians(self, data) -> list:
         """Fits and plots Gaussians at fractions of the data"""
 
-        gaussians = []
+        fractional_gaussians = []
         for subdata in data:
             gaussian = Gaussian()
             gaussian.fit(subdata)
-            gaussians.append(gaussian)
 
-        self._plot_gaussian_convergence(gaussians)
+            fractional_gaussians.append(gaussian)
 
-        return gaussians
+        self._plot_gaussian_convergence(fractional_gaussians)
+
+        return fractional_gaussians
 
     @staticmethod
     def _parameter_converged(params, threshold) -> bool:
@@ -429,7 +413,6 @@ class Window:
         fractional_gaussians = self._fractional_gaussians(fractional_data)
 
         # Set threshold based on expected SD and fraction along coord for mean
-        # Note the parameter convergence using the logarthmic data
         b_params = [gaussian.mean for gaussian in fractional_gaussians]
         b_converged = self._parameter_converged(b_params,
                                                 threshold=b_threshold)
@@ -443,15 +426,16 @@ class Window:
         return b_converged * c_converged
 
     def bins_converged(self):
-        """Tests the convergence of the bin heights relative to previous
-        bins"""
+        """
+        Tests the convergence of the bin heights relative to previous
+        bins
+        """
         return NotImplementedError
 
 
 def area(gaussian) -> float:
     """
     Returns integral of Gaussian between -∞ and ∞:
-
     I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
     """
     a, _, c = gaussian.params
@@ -476,7 +460,6 @@ class Gaussian:
 
         y = a * exp(-(x-b)^2 / (2*c^2))
         """
-
         self.params = a, b, c
 
     @property
@@ -491,13 +474,13 @@ class Gaussian:
 
     def __call__(self, x) -> float:
         """Returns y-value of Gaussian given input parameters and x-value"""
-
-        assert all(self.params)
+        if not all(self.params):
+            raise ValueError("Could not fit Gaussian. Consider sampling for "
+                             "longer")
         return gaussian_value(x, *self.params)
 
     def fit(self, data) -> None:
         """Fit a Gaussian to a set of data"""
-
         hist, bin_edges = np.histogram(data, density=False, bins=500)
         bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
 
