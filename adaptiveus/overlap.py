@@ -16,7 +16,7 @@ def _integrate_gaussians(gaussian_1, gaussian_2) -> float:
     calculation between the midpoints so avoid scipy quad missing the non-zero
     regions of the integrand
     """
-    midpoint = (gaussian_1.params[1] + gaussian_2.params[1]) / 2
+    midpoint = (gaussian_1.mean + gaussian_2.mean) / 2
 
     integral_up_to_midpoint = quad(_minimum_gaussian,
                                    -np.inf,
@@ -34,7 +34,7 @@ def _integrate_gaussians(gaussian_1, gaussian_2) -> float:
     return total_integral
 
 
-def _fix_overlaps_below_unity(overlap) -> float:
+def scale_overlap_to_at_most_unity(overlap) -> float:
     """
     If the error in the integration produces an overlap just over one, this
     function will reset the overlap to unity
@@ -58,7 +58,7 @@ def calculate_overlaps(gaussian_1: 'adaptiveus.adaptive.Gaussian',
     norm_overlap_1 = integral / area_1
     norm_overlap_2 = integral / area_2
 
-    norm_overlap_1 = _fix_overlaps_below_unity(norm_overlap_1)
-    norm_overlap_2 = _fix_overlaps_below_unity(norm_overlap_2)
+    norm_overlap_1 = scale_overlap_to_at_most_unity(norm_overlap_1)
+    norm_overlap_2 = scale_overlap_to_at_most_unity(norm_overlap_2)
 
     return [norm_overlap_1, norm_overlap_2]

@@ -69,15 +69,15 @@ def test_mltrain_adaptive():
     adaptive = UmbrellaSampling(traj=traj,
                                 driver=gap,
                                 zeta_func=AverageDistance([0, 1]),
-                                kappa=100,
+                                kappa=10,
                                 temp=300,
                                 interval=5,
                                 dt=0.5,
-                                init_ref=2,
-                                final_ref=2.1)
+                                init_ref=2.1,
+                                final_ref=2.2)
 
     # Run umbrella sampling without any adaptive and convergence testing
-    adaptive.run_adaptive_sampling(fs=2000)
+    adaptive.run_adaptive_sampling(fs=3000)
 
     assert adaptive.windows[1].zeta_ref is not None
     assert len(adaptive.windows) > 0
@@ -103,3 +103,18 @@ def test_overlap_error_func():
     # Output of this function with these parameters should be zero
     output = adaptive._overlap_error_func(x=1.135, s=0.5, b=1, c=0.1)
     assert np.isclose(output, 0, atol=1e-3)
+
+def test_adjust_kappa():
+
+    # Initialise UmbrellaSampling class
+    adaptive = UmbrellaSampling(traj=traj,
+                                driver=gap,
+                                zeta_func=AverageDistance([0, 1]),
+                                kappa=100,
+                                temp=300,
+                                interval=5,
+                                dt=0.5,
+                                init_ref=2,
+                                final_ref=2.1)
+
+    adaptive._adjust_kappa(ref=2.5)

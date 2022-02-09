@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from adaptiveus.log import logger
 from adaptiveus.overlap import calculate_overlaps
 from scipy.optimize import curve_fit
-from typing import Optional, Sequence
+from typing import Optional
 if 'paper' in plt.style.available:
     plt.style.use('paper')
 
@@ -122,7 +122,7 @@ class Windows(list):
         plt.plot(x_vals, lhs_overlaps, marker='o', color='b', linestyle='--',
                  markersize=7, mfc='white', label='LHS Overlap')
 
-        plt.axhline(0.1, linestyle='dotted', label='Threshold', color='k',
+        plt.axhline(y=0.1, linestyle='dotted', label='Threshold', color='k',
                     alpha=0.8)
 
         plt.xlabel('Window index')
@@ -163,10 +163,10 @@ class Windows(list):
         """
         plt.close()
 
-        if len(list(self)) == 0:
+        if len(self) == 0:
             raise ValueError("No windows to plot")
 
-        for window in list(self):
+        for window in self:
             if len(window.obs_zetas) == 0:
                 raise ValueError("Not observed zetas. Is the data loaded?")
 
@@ -189,6 +189,18 @@ class Windows(list):
         plt.close()
 
         return None
+
+
+def _powerspace(start, stop, power, num) -> np.ndarray:
+    """
+    Returns values spaced according to the power specified.
+    E.g., start = 0, stop = 100, power = 2, num = 11:
+          returns 0, 1, 4, 9,..., 100
+    """
+    start = np.power(start, 1 / float(power))
+    stop = np.power(stop, 1 / float(power))
+
+    return np.power(np.linspace(start, stop, num=num), power).astype(int)
 
 
 class Window:
@@ -259,15 +271,6 @@ class Window:
 
         return np.linspace(min_x, max_x, 500)
 
-    @property
-    def n(self) -> int:
-        """Number of samples in this window"""
-        if self.hist is None:
-            raise ValueError('Cannot determine the number of samples - '
-                             'window has not been binned')
-
-        return int(np.sum(self.hist))
-
     def bin(self, zetas: np.ndarray) -> None:
         """
         Bin the observed reaction coordinates in this window into an a set of
@@ -293,34 +296,22 @@ class Window:
 
         return None
 
-    @staticmethod
-    def _powerspace(start, stop, power, num) -> np.ndarray:
-        """
-        Returns values spaced according to the power specified.
-        E.g., start = 0, stop = 100, power = 2, num = 11:
-              returns 0, 1, 4, 9,..., 100
-        """
-        start = np.power(start, 1 / float(power))
-        stop = np.power(stop, 1 / float(power))
-
-        return np.power(np.linspace(start, stop, num=num), power).astype(int)
-
     def _get_fractional_data(self) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
         if len(self.obs_zetas) == 0:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
-        data_intervals = self._powerspace(self.number_of_samples / 10,
-                                          self.number_of_samples,
-                                          power=100,
-                                          num=10)
+        data_intervals = _powerspace(self.number_of_samples / 10,
+                                     self.number_of_samples,
+                                     power=100,
+                                     num=10)
 
         return [self.obs_zetas[:interval] for interval in data_intervals]
 
     def _plot_gaussian_convergence(self, gaussians) -> None:
         """
-        Plots the histogram data and Gaussians fitted to fractional
+        Plots the histogram data and Gaussians fitted to 10% fractional
         incremements of the window trajectory
         """
         for gaussian in gaussians:
@@ -346,9 +337,9 @@ class Window:
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
 
-        fractions = self._powerspace(self.number_of_samples / 10,
-                                     self.number_of_samples,
-                                     power=10, num=10) / self.number_of_samples
+        fractions = _powerspace(self.number_of_samples / 10,
+                                self.number_of_samples,
+                                power=10, num=10) / self.number_of_samples
 
         b_param_plt = ax1.plot(fractions, b_data,
                                linestyle='--', markersize=7, marker='o',
@@ -427,8 +418,7 @@ class Window:
 
     def bins_converged(self):
         """
-        Tests the convergence of the bin heights relative to previous
-        bins
+        Tests the convergence of the bin heights relative to previous bins
         """
         return NotImplementedError
 
@@ -439,7 +429,6 @@ def area(gaussian) -> float:
     I = ∫ dx a * exp(-(x-b)^2 / (2*c^2)) = ac √(2π)
     """
     a, _, c = gaussian.params
-
     return a * c * (2 * np.pi)**0.5
 
 
@@ -475,8 +464,8 @@ class Gaussian:
     def __call__(self, x) -> float:
         """Returns y-value of Gaussian given input parameters and x-value"""
         if not all(self.params):
-            raise ValueError("Could not fit Gaussian. Consider sampling for "
-                             "longer")
+            raise ValueError("Some or all Gaussian parameters are None")
+
         return gaussian_value(x, *self.params)
 
     def fit(self, data) -> None:
