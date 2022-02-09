@@ -256,6 +256,15 @@ class Window:
         return abs(self.gaussian.mean - self.zeta_ref)
 
     @property
+    def n(self) -> int:
+        """Number of samples in this window"""
+        if self.hist is None:
+            raise ValueError('Cannot determine the number of samples - '
+                             'window has not been binned')
+
+        return int(np.sum(self.hist))
+
+    @property
     def number_of_samples(self) -> int:
         """Number of sampled points in the window trajectory"""
         return len(self.obs_zetas)

@@ -53,7 +53,7 @@ def test_mltrain_non_adaptive():
     assert adaptive.windows[1].lhs_overlap is not None
     assert adaptive.windows[1].rhs_overlap is not None
 
-    assert len(adaptive.windows) == 10
+    assert len(adaptive.windows) == 5
 
     assert os.path.exists('overlap.pdf')
     assert os.path.exists('window_histograms.pdf')
@@ -103,6 +103,7 @@ def test_overlap_error_func():
     # Output of this function with these parameters should be zero
     output = adaptive._overlap_error_func(x=1.135, s=0.5, b=1, c=0.1)
     assert np.isclose(output, 0, atol=1e-3)
+
 
 def test_adjust_kappa():
 
