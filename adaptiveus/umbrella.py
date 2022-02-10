@@ -120,7 +120,7 @@ class UmbrellaSampling:
                                        interval=self.interval,
                                        dt=self.dt)
 
-            adaptive.run_md_window(traj=self.traj, mlp=self.driver, ref=ref,
+            adaptive.run_md_window(traj=self.traj, driver=self.driver, ref=ref,
                                    idx=idx, **kwargs)
             windows = Windows()
             windows.load(f'window_{idx}.txt')
@@ -281,7 +281,7 @@ class UmbrellaSampling:
         xi_interp = np.linspace(min(xi), max(xi), 100)
         for i, kappa in enumerate(kappas):
 
-            minima_idxs = _get_minima_idxs(i, tot_energy)
+            minima_idxs = _get_minima_idxs(tot_energy[i])
 
             if len(minima_idxs) == 1:
                 if abs(xi_interp[minima_idxs[0]] - ref) < kappa_threshold:
@@ -335,6 +335,8 @@ class UmbrellaSampling:
         self.windows.plot_discrepancy()
         self.windows.plot_histogram()
 
+        self.calculate_free_energy()
+
         return None
 
     def run_adaptive_sampling(self,
@@ -376,6 +378,8 @@ class UmbrellaSampling:
         self.windows.plot_overlaps()
         self.windows.plot_discrepancy()
         self.windows.plot_histogram()
+
+        self.calculate_free_energy()
 
         return None
 

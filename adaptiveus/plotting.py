@@ -4,23 +4,23 @@ from matplotlib.patches import Circle
 from mpl_toolkits.mplot3d import art3d
 
 
-def _is_minimum(values, i, idx) -> bool:
+def _is_minimum(values, idx) -> bool:
     """Checks if idx is at the edge of values and checks if it is a minimum"""
     if idx != 0 or idx != len(values) - 1:
-        if (values[i][idx - 1] and values[i][idx + 1]) > values[i][idx]:
+        if (values[idx - 1] and values[idx + 1]) > values[idx]:
             return True
     else:
         return False
 
 
-def _get_minima_idxs(i, y_vals) -> list:
+def _get_minima_idxs(y_vals) -> list:
     """Find the indexes of the minima from a set of data"""
-    grad = np.gradient(y_vals[i])
+    grad = np.gradient(y_vals)
     idxs = np.where(np.diff(np.sign(grad)) != 0)[0] + 1
 
     minima_idxs = []
     for idx in idxs:
-        if _is_minimum(y_vals, i, idx):
+        if _is_minimum(y_vals, idx):
             minima_idxs.append(idx)
 
     return minima_idxs
@@ -61,7 +61,7 @@ def _plot_2d_total_energy(x, y, z, ref) -> None:
 
     for i in range(len(y_grid)):
 
-        minima_idxs = _get_minima_idxs(i, z)
+        minima_idxs = _get_minima_idxs(z[i])
         for idx in minima_idxs:
             _add_point(ax, x[idx], y_grid[i][0], z[i][idx])
 
@@ -87,7 +87,7 @@ def _plot_1d_total_energy(x, bias_e, pot_e, total_e, ref, k_idx) -> None:
     plt.close()
     cmap = plt.cm.get_cmap('plasma')
 
-    minima_idxs = _get_minima_idxs(k_idx, total_e)
+    minima_idxs = _get_minima_idxs(total_e[k_idx])
 
     plt.plot(x, pot_e, label='Potential energy', color=cmap(0.1))
     plt.plot(x, bias_e[k_idx], label='Bias energy', color=cmap(0.3))

@@ -37,7 +37,7 @@ class MltrainAdaptive(MDDriver):
 
     def run_md_window(self,
                       traj: 'mltrain.sampling.md.Trajectory',
-                      mlp: 'mltrain.potentials._base.MLPotential',
+                      driver: 'mltrain.potentials._base.MLPotential',
                       ref: float,
                       idx: int,
                       **kwargs) -> None:
@@ -51,7 +51,7 @@ class MltrainAdaptive(MDDriver):
                   a 'pulling' trajectory that has sufficient sampling of a
                   range f reaction coordinates
 
-            mlp: Machine learnt potential
+            driver: Machine learnt potential
 
             ref: Reference value for the harmonic bias
 
@@ -65,7 +65,7 @@ class MltrainAdaptive(MDDriver):
         umbrella = MltrainUS(zeta_func=self.zeta_func, kappa=self.kappa)
 
         umbrella.run_umbrella_sampling(traj=traj,
-                                       mlp=mlp,
+                                       mlp=driver,
                                        temp=self.temp,
                                        interval=self.interval,
                                        dt=self.dt,
@@ -93,7 +93,9 @@ class MltrainAdaptive(MDDriver):
 
         return None
 
-    def calculate_free_energy(self, windows, zetas
+    def calculate_free_energy(self,
+                              windows: 'adaptiveus.adaptive.Windows',
+                              zetas: np.ndarray,
                               ) -> Tuple[np.ndarray, np.ndarray]:
         """Calculate the free energy using WHAM in mltrain"""
         umbrella = MltrainUS(zeta_func=self.zeta_func,

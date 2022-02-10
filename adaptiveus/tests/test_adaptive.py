@@ -44,7 +44,7 @@ def test_mltrain_non_adaptive():
     assert adaptive.driver is not None
 
     # Run umbrella sampling without any adaptive and convergence testing
-    adaptive.run_non_adaptive_sampling(n_windows=5,
+    adaptive.run_non_adaptive_sampling(n_windows=3,
                                        fs=2000)
 
     assert os.path.exists('param_conv_0.pdf')
@@ -53,13 +53,11 @@ def test_mltrain_non_adaptive():
     assert adaptive.windows[1].lhs_overlap is not None
     assert adaptive.windows[1].rhs_overlap is not None
 
-    assert len(adaptive.windows) == 5
+    assert len(adaptive.windows) == 3
 
     assert os.path.exists('overlap.pdf')
     assert os.path.exists('window_histograms.pdf')
     assert os.path.exists('discrepancy.pdf')
-
-    adaptive.calculate_free_energy()
 
 
 @work_in_zipped_dir(os.path.join(here, 'data.zip'))
@@ -69,15 +67,15 @@ def test_mltrain_adaptive():
     adaptive = UmbrellaSampling(traj=traj,
                                 driver=gap,
                                 zeta_func=AverageDistance([0, 1]),
-                                kappa=10,
+                                kappa=30,
                                 temp=300,
                                 interval=5,
                                 dt=0.5,
-                                init_ref=2.1,
+                                init_ref=2,
                                 final_ref=2.2)
 
     # Run umbrella sampling without any adaptive and convergence testing
-    adaptive.run_adaptive_sampling(fs=3000)
+    adaptive.run_adaptive_sampling(fs=2000)
 
     assert adaptive.windows[1].zeta_ref is not None
     assert len(adaptive.windows) > 0
@@ -105,6 +103,7 @@ def test_overlap_error_func():
     assert np.isclose(output, 0, atol=1e-3)
 
 
+@work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_adjust_kappa():
 
     # Initialise UmbrellaSampling class
