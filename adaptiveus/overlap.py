@@ -1,99 +1,64 @@
 import adaptiveus.adaptive as adp
 import numpy as np
-from adaptiveus.log import logger
 from scipy.integrate import quad
 
 
-def _choose_integrand_parameters(gaussian_1, gaussian_2, roots) -> tuple:
+def _minimum_gaussian(x, gaussian_1, gaussian_2) -> float:
+    """Returns the minimum value of two Gaussians at point x"""
+    return min(adp.gaussian_value(x, *gaussian_1.params),
+               adp.gaussian_value(x, *gaussian_2.params))
+
+
+def _integrate_gaussians(gaussian_1, gaussian_2) -> float:
     """
-    Select the appopriate Gaussians used for the integration. First it tries
-    to identify which Gaussian lies under the another between the two roots.
-    If unsucessful, it takes the Gaussian with the higher mean as the first
-    set of parameters
+    Integrates the area under the two Gaussians, taking the lowest Gaussian
+    as the height of the integrand at each point. Splits the integral
+    calculation between the midpoints so avoid scipy quad missing the non-zero
+    regions of the integrand
     """
+    midpoint = (gaussian_1.mean + gaussian_2.mean) / 2
 
-    midpoint = (min(roots) + max(roots)) / 2
+    integral_up_to_midpoint = quad(_minimum_gaussian,
+                                   -np.inf,
+                                   midpoint,
+                                   args=(gaussian_1, gaussian_2))
 
-    y_1 = adp.value(midpoint, *gaussian_1.params)
-    y_2 = adp.value(midpoint, *gaussian_2.params)
+    integral_from_midpoint = quad(_minimum_gaussian,
+                                  midpoint,
+                                  np.inf,
+                                  args=(gaussian_1, gaussian_2))
 
-    if y_1 > y_2:
-        return gaussian_1, gaussian_2
+    # First element is integral, second is error esimate
+    total_integral = integral_up_to_midpoint[0] + integral_from_midpoint[0]
 
-    elif y_1 < y_2:
-        return gaussian_2, gaussian_1
+    return total_integral
+
+
+def scale_overlap_to_at_most_unity(overlap) -> float:
+    """
+    If the error in the integration produces an overlap just over one, this
+    function will reset the overlap to unity
+    """
+    if overlap > 1:
+        assert np.isclose(overlap, 1, atol=1e-3)
+        return 1.0
 
     else:
-        if gaussian_2.params[1] > gaussian_1.params[1]:
-            return gaussian_2, gaussian_1
-
-        else:
-            return gaussian_1, gaussian_2
-
-
-def _calculate_integral(gaussian_1, gaussian_2, roots) -> float:
-    """Calculates the sum of integrals using the intercepts as limits"""
-
-    if len(roots) == 2:
-        logger.info(f'Found two real roots: {roots}')
-
-        lower_gaussian, upper_gaussian = _choose_integrand_parameters(
-            gaussian_1, gaussian_2, roots)
-
-        a_1, b_1, c_1 = lower_gaussian.params
-        a_2, b_2, c_2 = upper_gaussian.params
-
-        lower_int = quad(adp.value, -np.inf, min(roots),
-                         args=(a_1, b_1, c_1))
-        middle_int = quad(adp.value, min(roots), max(roots),
-                          args=(a_2, b_2, c_2))
-        upper_int = quad(adp.value, max(roots), np.inf,
-                         args=(a_1, b_1, c_1))
-
-        # Zeorth element is the value of the integral
-        return lower_int[0] + middle_int[0] + upper_int[0]
-
-    else:
-        # There will always be two real roots for sampled data
-        raise ValueError("Must be 2 real roots")
-
-
-def _calculate_intercepts(gaussian_1, gaussian_2) -> np.ndarray:
-    """
-    Calculates the point(s) of intersection between two Gaussians. Finds the
-    roots of the quadratic polynomial equation relating to two intersecting
-    Gaussians
-    """
-
-    a_1, b_1, c_1 = gaussian_1.params
-    a_2, b_2, c_2 = gaussian_2.params
-
-    a = (c_1**2 / c_2**2) - 1
-    b = - 2 * ((c_1**2 / c_2**2) * b_2 - b_1)
-    c = 2 * c_1**2 * np.log(a_1 / a_2) + (c_1**2 / c_2**2
-                                          ) * b_2**2 - b_1**2
-
-    return np.roots([a, b, c])
+        return overlap
 
 
 def calculate_overlaps(gaussian_1: 'adaptiveus.adaptive.Gaussian',
                        gaussian_2: 'adaptiveus.adaptive.Gaussian') -> list:
     """Calculates the fractional overlap between two Gaussians"""
-
-    roots = _calculate_intercepts(gaussian_1, gaussian_2)
-    logger.info(f'Intersections of Gaussians at {roots}')
+    integral = _integrate_gaussians(gaussian_1, gaussian_2)
 
     area_1 = adp.area(gaussian_1)
     area_2 = adp.area(gaussian_2)
 
-    if all(np.isreal(roots)):
-        integral = _calculate_integral(gaussian_1, gaussian_2, roots)
+    norm_overlap_1 = integral / area_1
+    norm_overlap_2 = integral / area_2
 
-        norm_overlap_1 = integral / area_1
-        norm_overlap_2 = integral / area_2
+    norm_overlap_1 = scale_overlap_to_at_most_unity(norm_overlap_1)
+    norm_overlap_2 = scale_overlap_to_at_most_unity(norm_overlap_2)
 
-        return [norm_overlap_1, norm_overlap_2]
-
-    else:
-        # There will always be two real roots for sampled data
-        raise ValueError(f"Found no real roots: {roots}")
+    return [norm_overlap_1, norm_overlap_2]
