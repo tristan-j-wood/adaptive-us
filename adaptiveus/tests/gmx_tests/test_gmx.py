@@ -5,7 +5,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 adp.Config.n_cores = 4
 
 
-@work_in_zipped_dir(os.path.join(here, 'data.zip'))
+# @work_in_zipped_dir(os.path.join(here, 'data.zip'))
 def test_gmx_non_adaptive():
 
     gromacs = adp.gmx.GMXAdaptive(zeta_func=None,
@@ -16,5 +16,5 @@ def test_gmx_non_adaptive():
 
     gromacs.run_md_window(traj=None,
                           driver='gmx',
-                          ref=None,
+                          ref=0.548899,
                           idx=None)

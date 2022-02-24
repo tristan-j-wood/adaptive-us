@@ -3,3 +3,4 @@ coloredlogs~=10.0
 numpy~=1.18.5
 matplotlib~=3.2.2
 scipy~=1.5.0
+pytest~=5.4.3

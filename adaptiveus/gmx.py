@@ -1,6 +1,6 @@
 import adaptiveus as adp
 import gromacs as gmx
-import os
+import numpy as np
 from typing import Callable
 from adaptiveus._base import MDDriver
 adp.Config.n_cores = 4
@@ -57,17 +57,16 @@ class GMXAdaptive(MDDriver):
         self.xtc_filename = xtc_filename
 
     @staticmethod
-    def _get_obs_zetas_from_xvg(filename) -> tuple:
+    def _get_obs_zetas_from_xvg(filename) -> list:
         """"""
         file_lines = open(filename, 'r').readlines()
 
-        x_values, obs_zetas = [], []
+        obs_zetas = []
         for line in file_lines:
             if not line[0] == '#' and not line[0] == '@':
-                x_values.append(float(line.strip('\n').split('\t')[0]))
                 obs_zetas.append(float(line.strip('\n').split('\t')[1]))
 
-        return x_values, obs_zetas
+        return obs_zetas
 
     def _write_window_file(self, win_n, ref, kappa) -> None:
         """"""
@@ -84,14 +83,15 @@ class GMXAdaptive(MDDriver):
     def _select_frame_for_us(self, ref, pulling_filename):
         """"""
 
-        times, obs_zetas = self._get_obs_zetas_from_xvg(pulling_filename)
-            
-        # Get the zetas from the pulling file
+        # Relies on a pulling file with times and zetas to exist
+        # Could I also extract the frames from the traj and
+        # get distances from this?
 
-        # Find the time associated with a specific reference (find closest)
+        obs_zetas = self._get_obs_zetas_from_xvg(pulling_filename)
+
+        closest_frame_idx = np.argmin([abs(ref - zeta) for zeta in obs_zetas])
 
         # Return the fraction along the trajectory at which this ref lies
-        # Could also check this reference is close enough
 
         # Get the frame associated with this fraction
 
@@ -137,19 +137,19 @@ class GMXAdaptive(MDDriver):
             {fs, ps, ns}: Simulation time in some units
         """
 
-        self._select_frame_for_us(ref=ref)
+        self._select_frame_for_us(ref=ref, pulling_filename='pull_pullx.xvg')
 
-        self._edit_mdp_file(ref, idx)
-
-        gmx.grompp(f=self.mdp_filename,
-                   p=self.top_filename,
-                   r=self.gro_filename,
-                   o=f'umbrella_{idx}.tpr')
-
-        # What is v?
-        gmx.mdrun(v=True, deffnm=f'umbrella_{idx}')
-
-        self._write_window_file(win_n=idx, ref=ref, kappa=self.kappa)
+        # self._edit_mdp_file(ref, idx)
+        #
+        # gmx.grompp(f=self.mdp_filename,
+        #            p=self.top_filename,
+        #            r=self.gro_filename,
+        #            o=f'umbrella_{idx}.tpr')
+        #
+        # # What is v?
+        # gmx.mdrun(v=True, deffnm=f'umbrella_{idx}')
+        #
+        # self._write_window_file(win_n=idx, ref=ref, kappa=self.kappa)
 
         return NotImplementedError
 
