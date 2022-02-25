@@ -9,7 +9,7 @@ adp.Config.n_cores = 4
 def test_gmx_non_adaptive():
 
     gromacs = adp.gmx.GMXAdaptive(zeta_func=None,
-                                  kappa=None,
+                                  kappa=100,
                                   temp=None,
                                   interval=None,
                                   dt=None)
@@ -17,4 +17,4 @@ def test_gmx_non_adaptive():
     gromacs.run_md_window(traj=None,
                           driver='gmx',
                           ref=0.548899,
-                          idx=None)
+                          idx=2)
