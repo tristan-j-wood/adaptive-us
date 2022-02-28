@@ -41,7 +41,7 @@ class UmbrellaSampling:
 
     def __init__(self,
                  traj: 'mltrain.configurations.trajectory',
-                 driver: 'mltrain.potentials._base.MLPotential',
+                 driver: Optional['mltrain.potentials._base.MLPotential', str],
                  zeta_func: Optional['mltrain.sampling.reaction_coord.ReactionCoordinate'],
                  kappa: float,
                  temp: float,
@@ -61,7 +61,7 @@ class UmbrellaSampling:
                   e.g. a 'pulling' trajectory that has sufficient sampling of a
                   range of reaction coordinates
 
-            driver: Driver for the dynamics. E.g., machine learnt potential
+            driver: Driver for the dynamics. E.g., ML potential, gmx
 
             zeta_func: Reaction coordinate, as the function of atomic positions
 
@@ -81,7 +81,7 @@ class UmbrellaSampling:
                        first window
         """
 
-        self.driver = driver    # Only mltrain implemented
+        self.driver = driver
         self.zeta_func:         Optional[Callable] = zeta_func
 
         self.traj = traj        # Only mltrain trajectories implemented
@@ -110,6 +110,7 @@ class UmbrellaSampling:
                            idx,
                            **kwargs) -> 'adaptiveus.adaptive.window':
         """Run a single umbrella sampling window using a specified method"""
+
         if isinstance(self.driver, mltrain.potentials._base.MLPotential):
 
             from adaptiveus.mltrain import MltrainAdaptive
@@ -122,11 +123,23 @@ class UmbrellaSampling:
 
             adaptive.run_md_window(traj=self.traj, driver=self.driver, ref=ref,
                                    idx=idx, **kwargs)
-            windows = Windows()
-            windows.load(f'window_{idx}.txt')
+
+        elif self.driver == 'gmx':
+
+            from adaptiveus.gmx import GMXAdaptive
+
+            adaptive = GMXAdaptive(kappa=self.kappa,
+                                   temp=self.temp,
+                                   interval=self.interval,
+                                   dt=self.dt)
+
+            adaptive.run_md_window(ref=ref, idx=idx, **kwargs)
 
         else:
             raise NotImplementedError
+
+        windows = Windows()
+        windows.load(f'window_{idx}.txt')
 
         return windows[0]
 

@@ -1,10 +1,8 @@
-import sys
-
 import adaptiveus as adp
 import gromacs as gmx
 import MDAnalysis as mda
 import numpy as np
-from typing import Callable
+import os
 from adaptiveus._base import MDDriver
 adp.Config.n_cores = 4
 
@@ -12,22 +10,20 @@ adp.Config.n_cores = 4
 class GMXAdaptive(MDDriver):
 
     def __init__(self,
-                 zeta_func,
                  kappa: float,
                  temp: float,
                  interval: int,
                  dt: float,
-                 gro_filename: str = 'structure.gro',
-                 top_filename: str = 'topol.top',
-                 mdp_filename: str = 'md_umbrella.mdp',
-                 xtc_filename: str = 'trajectory.xtc'):
+                 gro_filename:  str = 'structure.gro',
+                 top_filename:  str = 'topol.top',
+                 mdp_filename:  str = 'md_umbrella.mdp',
+                 xtc_filename:  str = 'pull.xtc',
+                 pull_filename: str = 'pullx.xvg'):
         """
         Perform adaptive umbrella sampling using gromacs to drive the dynamics
 
         -----------------------------------------------------------------------
         Arguments:
-            zeta_func: Reaction coordinate, as the function of atomic positions
-
             kappa: Value of the spring constant, κ, used in umbrella sampling
 
             temp: Temperature in K to initialise velocities and to run NVT MD.
@@ -45,8 +41,9 @@ class GMXAdaptive(MDDriver):
 
             xtc_filename: GROMACS trajectory file
 
+            pull_filename: GROMACS pulling (x-coordinate) file
+
             """
-        self.zeta_func:         Callable = zeta_func
         self.kappa:             float = kappa
 
         self.temp:              float = temp
@@ -58,10 +55,11 @@ class GMXAdaptive(MDDriver):
         self.mdp_filename = mdp_filename
         self.mdp_filename = mdp_filename
         self.xtc_filename = xtc_filename
+        self.pull_filename = pull_filename
 
     @staticmethod
     def _get_obs_zetas_from_xvg(filename) -> list:
-        """"""
+        """Get the observed reaction coordinates from an xvg formatted file"""
         file_lines = open(filename, 'r').readlines()
 
         obs_zetas = []
@@ -71,71 +69,62 @@ class GMXAdaptive(MDDriver):
 
         return obs_zetas
 
-    def _write_window_file(self, win_n, ref, kappa) -> None:
-        """"""
-        obs_zetas = self._get_obs_zetas_from_xvg(f'umbrella_{win_n}_pullx.xvg')
+    def _write_window_file(self, idx: int, ref: float, kappa: float) -> None:
+        """Write the observed zetas, window num, ref and kappa to a file"""
+        obs_zetas = self._get_obs_zetas_from_xvg(f'umbrella_{idx}_pullx.xvg')
 
-        with open(f'window_{win_n}', 'w') as outfile:
-            print(f'{win_n} {ref} {kappa}', file=outfile)
+        with open(f'window_{idx}', 'w') as outfile:
+            print(f'{idx} {ref} {kappa}', file=outfile)
 
             for obs_zeta in obs_zetas:
                 print(f'{obs_zeta}', file=outfile)
 
         return None
 
-    def _select_frame_for_us(self, ref, pulling_filename):
-        """"""
-        # Relies on a pulling file with times and zetas to exist
-        # Could I also extract the frames from the traj and
-        # get distances from this?
+    def _select_frame_for_us(self, ref: float, idx: int) -> None:
+        """Select a frame from the GROMACS .xtc pulling trajectory with a
+        reaction coordinate closest to the given reference. Write this frame
+        to a gro file"""
+        assert os.path.exists(self.pull_filename)
 
-        obs_zetas = self._get_obs_zetas_from_xvg(pulling_filename)
+        obs_zetas = self._get_obs_zetas_from_xvg(self.pull_filename)
+        system = mda.Universe(self.gro_filename, self.xtc_filename)
 
         closest_frame_idx = np.argmin([abs(ref - zeta) for zeta in obs_zetas])
         fraction_along_traj = closest_frame_idx / len(obs_zetas)
 
-        self.xtc_filename = 'pull.xtc'
-        self.gro_filename = 'umbrella0.gro'
-
-        system = mda.Universe(self.gro_filename, self.xtc_filename)
-
-        index_needed = int(len(system.trajectory) * fraction_along_traj)
+        # Get the index of the first frame from the pulling traj
+        index_of_traj = int(len(system.trajectory) * fraction_along_traj)
 
         atoms = system.select_atoms('all')
-        atoms.write('init_us.gro', frames=[index_needed])
+        atoms.write(f'win_frame_{idx}.gro', frames=[index_of_traj])
 
-        return NotImplementedError
+        return None
 
-    def _edit_mdp_file(self, ref, idx):
-        """"""
+    def _edit_mdp_file(self, ref: float) -> None:
+        """Edit the MD parameter file with the updated kappa and ref values"""
         mdp = gmx.fileformats.mdp.MDP(filename=self.mdp_filename)
 
-        # mdp.pop('pull_coord1_k')
+        # Currently does not modify dt, interval or total time automatically
+
         mdp['pull_coord1_k'] = self.kappa
         mdp['pull_coord1_start'] = 'no'
         mdp['pull_coord1_init'] = ref
 
         mdp.write(f'{self.mdp_filename}')
 
-        return NotImplementedError
+        return None
 
     def run_md_window(self,
-                      traj,
-                      driver='gmx',
                       ref=None,
                       idx=None,
-                      **kwargs):
+                      **kwargs) -> None:
         """
         Run a single umbrella window using mltrain and save the sampled
         reaction coordinates
 
         -----------------------------------------------------------------------
         Arguments:
-            traj: Trajectory from which to initialise the umbrella over, e.g.
-                  a 'pulling' trajectory that has sufficient sampling of a
-                  range f reaction coordinates
-
-            driver: GROMACS
 
             ref: Reference value for the harmonic bias
 
@@ -147,28 +136,27 @@ class GMXAdaptive(MDDriver):
             {fs, ps, ns}: Simulation time in some units
         """
 
-        self._select_frame_for_us(ref=ref, pulling_filename='pull_pullx.xvg')
+        assert ref is not None and idx is not None
 
-        self._edit_mdp_file(ref, idx)
+        self._select_frame_for_us(ref=ref, idx=idx)
+
+        self._edit_mdp_file(ref)
 
         gmx.grompp(f=self.mdp_filename,
                    p=self.top_filename,
-                   r='init_us.gro',
+                   r=f'win_frame_{idx}.gro',
+                   c=f'win_frame_{idx}.gro',
                    n='index.ndx',
-                   c='init_us.gro',
                    maxwarn='99',
-                   o=f'umbrella.tpr')
+                   o=f'umbrella_{idx}.tpr')
 
         # What is v?
-        gmx.mdrun(v=True, deffnm=f'umbrella')
+        gmx.mdrun(v=True, deffnm=f'umbrella_{idx}')
 
-        self._write_window_file(win_n=idx, ref=ref, kappa=self.kappa)
+        self._write_window_file(idx=idx, ref=ref, kappa=self.kappa)
 
-        return NotImplementedError
+        return None
 
-    def calculate_free_energy(self,
-                              windows=None,
-                              zetas=None):
+    def calculate_free_energy(self, windows=None, zetas=None):
         """"""
-
         return NotImplementedError
