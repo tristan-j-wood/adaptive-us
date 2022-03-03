@@ -1,5 +1,6 @@
 import mltrain.sampling.md
 import numpy as np
+import os
 from multiprocessing import Pool
 from scipy import special, optimize, interpolate
 from adaptiveus.log import logger
@@ -40,13 +41,13 @@ def _overlap_error_func(x, s, b, c) -> float:
 class UmbrellaSampling:
 
     def __init__(self,
-                 traj: 'mltrain.configurations.trajectory',
-                 driver: Optional['mltrain.potentials._base.MLPotential', str],
-                 zeta_func: Optional['mltrain.sampling.reaction_coord.ReactionCoordinate'],
+                 driver: ['mltrain.potentials._base.MLPotential', str],
                  kappa: float,
                  temp: float,
                  interval: int,
                  dt: float,
+                 zeta_func: Optional['mltrain.sampling.reaction_coord.ReactionCoordinate'] = None,
+                 traj: Optional['mltrain.configurations.trajectory'] = None,
                  init_ref: Optional[float] = None,
                  final_ref: Optional[float] = None,
                  ):
@@ -84,7 +85,7 @@ class UmbrellaSampling:
         self.driver = driver
         self.zeta_func:         Optional[Callable] = zeta_func
 
-        self.traj = traj        # Only mltrain trajectories implemented
+        self.traj:              Optional = traj  # Only mltrain currently
 
         self.kappa:             float = kappa
         self.default_kappa:     float = kappa
@@ -216,7 +217,14 @@ class UmbrellaSampling:
             free_energies = adaptive.calculate_free_energy(self.windows, zetas)
 
         else:
-            raise NotImplementedError
+            from adaptiveus.gmx import GMXAdaptive
+
+            adaptive = GMXAdaptive(kappa=self.kappa,
+                                   temp=self.temp,
+                                   interval=self.interval,
+                                   dt=self.dt)
+
+            free_energies = adaptive.calculate_free_energy(self.windows)
 
         return free_energies
 
@@ -230,7 +238,8 @@ class UmbrellaSampling:
             self.driver.predict(self.traj)
             energies = [config.energy.predicted for config in self.traj]
 
-        else:
+        elif self.driver == 'gmx':
+
             raise NotImplementedError
 
         return [energy - min(energies) for i, energy in enumerate(energies)]
@@ -259,7 +268,6 @@ class UmbrellaSampling:
         bias_energy = _interpolate(xi, bias_energy, kind='quadratic')
 
         tot_energy = bias_energy + pot_energy
-        # Includes every 3rd element to smooth out function
         tot_energy = np.asarray([_interpolate(xi_interp[::3],
                                               tot_energy[i][::3],
                                               kind='cubic'
@@ -286,7 +294,9 @@ class UmbrellaSampling:
         bias energy and potential energy. If one minimum is found near the
         reference value, kappa will be set corresponding to this bias
         """
+        # Maybe load in the xis beforehand depending on the method
         xi = self.zeta_func(self.traj)
+
         kappas = np.linspace(0, 2 * self.default_kappa, num=30)
 
         tot_energy = self._calculate_and_plot_total_energy(xi, kappas, ref)
@@ -326,20 +336,26 @@ class UmbrellaSampling:
         refs = self._reference_values(n_windows)
         n_processes = min(len(refs)-1, Config.n_cores)
 
-        with Pool(processes=n_processes) as pool:
+        # Parallelisation currently doesn't work with gmx
+        # with Pool(processes=n_processes) as pool:
 
-            converged = self._test_convergence(ref=self.init_ref, **kwargs)
-            logger.info(f'Gaussian parameters converged: {converged}')
+            # converged = self._test_convergence(ref=self.init_ref, **kwargs)
+            # logger.info(f'Gaussian parameters converged: {converged}')
+
 
             # Start from index 1 as test_convergence runs the first window
-            results = [pool.apply(self._run_single_window,
-                                  args=(ref.copy(),
-                                        idx+1),
-                                  kwds=deepcopy(kwargs))
-                       for idx, ref in enumerate(refs[1:])]
+            # results = [pool.apply(self._run_single_window,
+            #                       args=(ref.copy(),
+            #                             idx+1),
+            #                       kwds=deepcopy(kwargs))
+            #            for idx, ref in enumerate(refs[1:])]
 
-        for result in results:
-            self.windows.append(result)
+        # for result in results:
+        #     self.windows.append(result)
+
+        for idx, ref in enumerate(refs):
+            window = self._run_single_window(ref=ref, idx=idx, **kwargs)
+            self.windows.append(window)
 
         for idx in range(n_windows - 1):
             self.windows.calculate_overlap(idx0=idx, idx1=idx+1)
@@ -367,13 +383,15 @@ class UmbrellaSampling:
 
             {fs, ps, ns}: Simulation time in some units
         """
-        converged = self._test_convergence(ref=self.init_ref, **kwargs)
-        logger.info(f'Gaussian parameters converged: {converged}')
+        # converged = self._test_convergence(ref=self.init_ref, **kwargs)
+        # logger.info(f'Gaussian parameters converged: {converged}')
+        #
+        # ref = self._calculate_next_ref(idx=0, s_target=s_target)
 
-        ref = self._calculate_next_ref(idx=0, s_target=s_target)
-
-        with open('parameters.txt', 'w') as outfile:
-            idx, ref = 1, ref
+        with open('kappa_ref.txt', 'w') as outfile:
+            # tmp remove test convergence as doesn't work for small timescales
+            # idx, ref = 1, ref
+            idx, ref = 0, self.init_ref
             while ref <= self.final_ref:
 
                 window = self._run_single_window(ref=ref, idx=idx, **kwargs)
