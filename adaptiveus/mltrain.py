@@ -1,6 +1,7 @@
 import numpy as np
 from mltrain.sampling.umbrella import UmbrellaSampling as MltrainUS
 from adaptiveus._base import MDDriver
+from adaptiveus.bias import Bias
 from typing import Optional, Callable, Tuple
 
 
@@ -8,6 +9,8 @@ class MltrainAdaptive(MDDriver):
 
     def __init__(self,
                  zeta_func: 'mltrain.sampling.reaction_coord.ReactionCoordinate',
+                 traj: 'mltrain.sampling.md.Trajectory',
+                 mlp: 'mltrain.potentials._base.MLPotential',
                  kappa: float,
                  temp: float,
                  interval: int,
@@ -18,6 +21,13 @@ class MltrainAdaptive(MDDriver):
         -----------------------------------------------------------------------
         Arguments:
             zeta_func: Reaction coordinate, as the function of atomic positions
+
+            traj: Trajectory from which to initialise the umbrella over, e.g.
+                  a 'pulling' trajectory that has sufficient sampling of a
+                  range f reaction coordinates
+
+
+            mlp: Machine learnt potential
 
             kappa: Value of the spring constant, κ, used in umbrella sampling
 
@@ -35,9 +45,27 @@ class MltrainAdaptive(MDDriver):
         self.interval:          int = interval
         self.dt:                float = dt
 
+        self.mlp = mlp
+        self.traj = traj
+
+    @property
+    def zetas(self):
+        """Get the zetas from the mltrain trajectory and zeta function"""
+        return self.zeta_func(self.traj)
+
+    def calculate_pot_energy(self):
+        """"""
+        self.mlp.predict(self.traj)
+        return [config.energy.predicted for config in self.traj]
+
+    def calculate_bias_energy(self, kappas, ref):
+        """Calculates the bias energy for configurations in a trajectory"""
+        bias = Bias(self.zeta_func, kappa=kappas, reference=ref)
+        print(kappas)
+        print(self.traj)
+        return bias(self.traj)
+
     def run_md_window(self,
-                      traj: 'mltrain.sampling.md.Trajectory',
-                      driver: 'mltrain.potentials._base.MLPotential',
                       ref: float,
                       idx: int,
                       **kwargs) -> None:
@@ -47,11 +75,6 @@ class MltrainAdaptive(MDDriver):
 
         -----------------------------------------------------------------------
         Arguments:
-            traj: Trajectory from which to initialise the umbrella over, e.g.
-                  a 'pulling' trajectory that has sufficient sampling of a
-                  range f reaction coordinates
-
-            driver: Machine learnt potential
 
             ref: Reference value for the harmonic bias
 
@@ -64,8 +87,8 @@ class MltrainAdaptive(MDDriver):
         """
         umbrella = MltrainUS(zeta_func=self.zeta_func, kappa=self.kappa)
 
-        umbrella.run_umbrella_sampling(traj=traj,
-                                       mlp=driver,
+        umbrella.run_umbrella_sampling(traj=self.traj,
+                                       mlp=self.mlp,
                                        temp=self.temp,
                                        interval=self.interval,
                                        dt=self.dt,

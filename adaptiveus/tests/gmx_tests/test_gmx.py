@@ -14,8 +14,9 @@ def test_gmx_non_adaptive():
                                 temp=300,
                                 interval=5,
                                 dt=2,
+                                traj='pullx.xvg',
                                 init_ref=0.515,
                                 final_ref=1)
 
     adaptive.run_adaptive_sampling(n_windows=3,
-                                   ps=2)
+                                   ps=0.2)

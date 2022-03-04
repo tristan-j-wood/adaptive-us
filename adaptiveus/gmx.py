@@ -10,6 +10,55 @@ from typing import Tuple
 adp.Config.n_cores = 4
 
 
+def _get_data_from_xvg(filename) -> dict:
+    """Extract the x and y data from an xvg file"""
+    file_lines = open(filename, 'r').readlines()
+
+    data = {}
+    for line in file_lines:
+        if not line[0] == '#' and not line[0] == '@':
+
+            x_vals = float(line.strip('\n').split()[0])
+            y_vals = float(line.strip('\n').split()[1])
+
+            data[x_vals] = y_vals
+
+    return data
+
+
+def _reduce_data(dataset_a, dataset_b) -> Tuple[list, list]:
+    """Reduce dataset a and dataset b where they share common keys"""
+
+    reshaped_a, reshaped_b = [], []
+    for key in dataset_a.keys() & dataset_b.keys():
+
+        reshaped_a.append(dataset_a[key])
+        reshaped_b.append(dataset_b[key])
+
+    return reshaped_a, reshaped_b
+
+
+def _calculate_total_energy():
+    """"""
+
+    os.system("gmx energy -f pull.edr <<< 'Potential'")
+
+    zetas = _get_data_from_xvg('pullx.xvg')
+    pot_energies = _get_data_from_xvg(filename='energy.xvg')
+
+    reshaped_zetas, reshaped_pot_energies = _combine_data(zetas, pot_energies)
+
+    kappa, ref = 10000, 3
+
+    bias = _calculate_harmonic_bias(kappa, ref, reshaped_zetas)
+    total_energy = [sum(e) for e in zip(bias, reshaped_pot_energies)]
+
+    plt.plot(reshaped_zetas, reshaped_pot_energies)
+    plt.plot(reshaped_zetas, bias)
+    plt.plot(reshaped_zetas, total_energy)
+    plt.savefig('tmp2.pdf')
+
+
 def _n_simulation_steps(dt: float,
                         kwargs: dict) -> int:
     """Calculate the number of simulation steps from a set of keyword
@@ -51,11 +100,11 @@ class GMXAdaptive(MDDriver):
                  temp: float,
                  interval: int,
                  dt: float,
+                 pull_filename: str,
                  gro_filename:  str = 'structure.gro',
                  top_filename:  str = 'topol.top',
                  mdp_filename:  str = 'md_umbrella.mdp',
-                 xtc_filename:  str = 'pull.xtc',
-                 pull_filename: str = 'pullx.xvg'):
+                 xtc_filename:  str = 'pull.xtc'):
         """
         Perform adaptive umbrella sampling using gromacs to drive the dynamics
 
@@ -95,6 +144,38 @@ class GMXAdaptive(MDDriver):
         self.mdp_filename = mdp_filename
         self.xtc_filename = xtc_filename
         self.pull_filename = pull_filename
+
+    @property
+    def zetas(self) -> list:
+        """Get the zetas from the gmx pulling xvg file"""
+        zetas = _get_data_from_xvg(self.pull_filename)
+        energies = _get_data_from_xvg('energy.xvg')
+
+        reduced_zetas, _ = _reduce_data(zetas, energies)
+
+        return reduced_zetas
+
+    def calculate_pot_energy(self) -> list:
+        """Gets the potential energy from the gmx energy file"""
+        os.system("gmx energy -f pull.edr <<< 'Potential'")
+
+        zetas = _get_data_from_xvg(self.pull_filename)
+        energies = _get_data_from_xvg('energy.xvg')
+
+        _, reduced_energies = _reduce_data(zetas, energies)
+
+        return reduced_energies
+
+    def calculate_bias_energy(self, kappas, ref):
+        """Calculates the bias energy for configurations in a trajectory"""
+        zetas = _get_data_from_xvg(self.pull_filename)
+        energies = _get_data_from_xvg('energy.xvg')
+
+        reduced_zetas, _ = _reduce_data(zetas, energies)
+        print(kappas)
+        print(reduced_zetas)
+
+        return [(kappas / 2) * (zeta - ref)**2 for zeta in reduced_zetas]
 
     @staticmethod
     def _get_obs_zetas_from_xvg(filename) -> list:
@@ -171,6 +252,8 @@ class GMXAdaptive(MDDriver):
         -----------------------------------------------------------------------
         Arguments:
 
+            traj: Gromacs pulling xvg filename
+
             ref: Reference value for the harmonic bias
 
             idx: Index for the umbrella sampling window
@@ -180,7 +263,6 @@ class GMXAdaptive(MDDriver):
 
             {fs, ps, ns}: Simulation time in some units
         """
-
         assert ref is not None and idx is not None
 
         self.n_steps = _n_simulation_steps(self.dt, kwargs)
@@ -188,46 +270,6 @@ class GMXAdaptive(MDDriver):
         self._select_frame_for_us(ref=ref, idx=idx)
 
         self._edit_mdp_file(ref, idx=idx)
-
-        ###########################
-        os.system("gmx energy -f pull.edr <<< 'Potential'")
-
-        file_lines = open('energy.xvg', 'r').readlines()
-        pot_energies = {}
-        for line in file_lines:
-            if not line[0] == '#' and not line[0] == '@':
-                x = float(line.strip('\n').split()[0])
-                y = float(line.strip('\n').split()[1])
-                pot_energies[x] = y
-
-        file_lines = open('pullx.xvg')
-        rxn_coords = {}
-        for line in file_lines:
-            if not line[0] == '#' and not line[0] == '@':
-                x = float(line.strip('\n').split()[0])
-                y = float(line.strip('\n').split()[1])
-                rxn_coords[x] = y
-
-        new_zeta, new_pot_energy = [], []
-        for time in pot_energies.keys() & rxn_coords.keys():
-            new_zeta.append(rxn_coords[time])
-            new_pot_energy.append(pot_energies[time])
-
-        rel_new_pot_energy = [e - min(new_pot_energy) for e in new_pot_energy]
-
-        kappa = 10000
-        ref = 2
-        bias = [(kappa / 2) * (xi - ref)**2 for xi in new_zeta]
-
-        summed_e = [sum(x) for x in zip(bias, rel_new_pot_energy)]
-
-        plt.plot(new_zeta, rel_new_pot_energy)
-        plt.plot(new_zeta, bias)
-        plt.plot(new_zeta, summed_e)
-        plt.savefig('tmp2.pdf')
-
-        exit()
-        #####################
 
         gmx.grompp(f=f'{self.mdp_filename.replace(".mdp", f"_{idx}.mdp")}',
                    p=self.top_filename,

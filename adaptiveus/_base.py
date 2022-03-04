@@ -1,15 +1,18 @@
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import Optional
 
 
 class MDDriver(ABC):
     """Abstract base class for MD driver"""
 
+    @property
+    @abstractmethod
+    def zetas(self) -> np.ndarray:
+        """Get the zetas from the input pulling trajectory"""
+
     @abstractmethod
     def run_md_window(self,
                       traj,
-                      driver: Optional,
                       ref: float,
                       idx: int,
                       **kwargs):
@@ -24,6 +27,14 @@ class MDDriver(ABC):
               2.4673
               ...
         """
+
+    @abstractmethod
+    def calculate_pot_energy(self) -> list:
+        """"""
+
+    @abstractmethod
+    def calculate_bias_energy(self, kappas, ref):
+        """"""
 
     @abstractmethod
     def calculate_free_energy(self,

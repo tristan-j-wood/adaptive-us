@@ -47,7 +47,7 @@ class UmbrellaSampling:
                  interval: int,
                  dt: float,
                  zeta_func: Optional['mltrain.sampling.reaction_coord.ReactionCoordinate'] = None,
-                 traj: Optional['mltrain.configurations.trajectory'] = None,
+                 traj: ['mltrain.configurations.trajectory', str] = None,
                  init_ref: Optional[float] = None,
                  final_ref: Optional[float] = None,
                  ):
@@ -82,10 +82,8 @@ class UmbrellaSampling:
                        first window
         """
 
-        self.driver = driver
-        self.zeta_func:         Optional[Callable] = zeta_func
-
-        self.traj:              Optional = traj  # Only mltrain currently
+        self.zeta_func:         Optional[Callable] = zeta_func  # mltrain only
+        self.traj:              Optional = traj
 
         self.kappa:             float = kappa
         self.default_kappa:     float = kappa
@@ -96,8 +94,31 @@ class UmbrellaSampling:
 
         self.windows:           Windows = Windows()
 
+        # Currently only works for mltrain
         self.init_ref = self._set_reference_point(init_ref, idx=0)
         self.final_ref = self._set_reference_point(final_ref, idx=-1)
+
+        if isinstance(driver, mltrain.potentials._base.MLPotential):
+
+            from adaptiveus.mltrain import MltrainAdaptive
+
+            self.driver = MltrainAdaptive(zeta_func=self.zeta_func,
+                                          mlp=driver,
+                                          traj=self.traj,
+                                          kappa=self.kappa,
+                                          temp=self.temp,
+                                          interval=self.interval,
+                                          dt=self.dt)
+
+        elif driver == 'gmx':
+
+            from adaptiveus.gmx import GMXAdaptive
+
+            self.driver = GMXAdaptive(kappa=self.kappa,
+                                      temp=self.temp,
+                                      pull_filename=self.traj,
+                                      interval=self.interval,
+                                      dt=self.dt)
 
     def _set_reference_point(self, ref, idx) -> float:
         """
@@ -106,38 +127,11 @@ class UmbrellaSampling:
         """
         return self.zeta_func(self.traj[idx]) if ref is None else ref
 
-    def _run_single_window(self,
-                           ref,
-                           idx,
-                           **kwargs) -> 'adaptiveus.adaptive.window':
+    def _run_single_window(self, ref, idx, **kwargs
+                           ) -> 'adaptiveus.adaptive.window':
         """Run a single umbrella sampling window using a specified method"""
 
-        if isinstance(self.driver, mltrain.potentials._base.MLPotential):
-
-            from adaptiveus.mltrain import MltrainAdaptive
-
-            adaptive = MltrainAdaptive(zeta_func=self.zeta_func,
-                                       kappa=self.kappa,
-                                       temp=self.temp,
-                                       interval=self.interval,
-                                       dt=self.dt)
-
-            adaptive.run_md_window(traj=self.traj, driver=self.driver, ref=ref,
-                                   idx=idx, **kwargs)
-
-        elif self.driver == 'gmx':
-
-            from adaptiveus.gmx import GMXAdaptive
-
-            adaptive = GMXAdaptive(kappa=self.kappa,
-                                   temp=self.temp,
-                                   interval=self.interval,
-                                   dt=self.dt)
-
-            adaptive.run_md_window(ref=ref, idx=idx, **kwargs)
-
-        else:
-            raise NotImplementedError
+        self.driver.run_md_window(ref=ref, idx=idx, **kwargs)
 
         windows = Windows()
         windows.load(f'window_{idx}.txt')
@@ -257,34 +251,36 @@ class UmbrellaSampling:
         Plot these energies in 1D and 2D
         """
 
-        xi_interp = np.linspace(min(xi), max(xi), 100)
+        reduced_xi = np.linspace(min(xi), max(xi), 100)
         xs, ys = np.meshgrid(xi, kappas)
 
-        pot_energy = self._calculate_pot_energy()
-        # Includes every 3rd element to smooth out function
-        pot_energy = _interpolate(xi[::3], pot_energy[::3], kind='cubic')
+        pot_energies = self.driver.calculate_pot_energy()
+        pot_energies = _interpolate(xi[::3], pot_energies[::3], kind='cubic')
 
-        bias_energy = self._calculate_bias_along_coord(kappa=ys, ref=ref)
+        bias_energy = self.driver.calculate_bias_energy(kappas=ys, ref=ref)
+        print(bias_energy)
         bias_energy = _interpolate(xi, bias_energy, kind='quadratic')
 
-        tot_energy = bias_energy + pot_energy
-        tot_energy = np.asarray([_interpolate(xi_interp[::3],
+        tot_energy = pot_energies + bias_energy
+        tot_energy = np.asarray([_interpolate(reduced_xi[::3],
                                               tot_energy[i][::3],
                                               kind='cubic'
                                               ) for i in range(len(tot_energy))])
 
         # Plot 1D total energy for the middle kappa
-        _plot_1d_total_energy(xi_interp,
+        _plot_1d_total_energy(reduced_xi,
                               bias_energy,
-                              pot_energy,
+                              pot_energies,
                               tot_energy,
                               ref=ref,
                               k_idx=int(len(kappas)/2))
 
-        _plot_2d_total_energy(xi_interp,
+        _plot_2d_total_energy(reduced_xi,
                               kappas,
                               tot_energy,
                               ref=ref)
+
+        exit()
 
         return tot_energy
 
@@ -294,9 +290,9 @@ class UmbrellaSampling:
         bias energy and potential energy. If one minimum is found near the
         reference value, kappa will be set corresponding to this bias
         """
-        # Maybe load in the xis beforehand depending on the method
-        xi = self.zeta_func(self.traj)
 
+        # be consistent with xi and zeta
+        xi = self.driver.zetas
         kappas = np.linspace(0, 2 * self.default_kappa, num=30)
 
         tot_energy = self._calculate_and_plot_total_energy(xi, kappas, ref)
