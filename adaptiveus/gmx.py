@@ -38,27 +38,6 @@ def _reduce_data(dataset_a, dataset_b) -> Tuple[list, list]:
     return reshaped_a, reshaped_b
 
 
-def _calculate_total_energy():
-    """"""
-
-    os.system("gmx energy -f pull.edr <<< 'Potential'")
-
-    zetas = _get_data_from_xvg('pullx.xvg')
-    pot_energies = _get_data_from_xvg(filename='energy.xvg')
-
-    reshaped_zetas, reshaped_pot_energies = _combine_data(zetas, pot_energies)
-
-    kappa, ref = 10000, 3
-
-    bias = _calculate_harmonic_bias(kappa, ref, reshaped_zetas)
-    total_energy = [sum(e) for e in zip(bias, reshaped_pot_energies)]
-
-    plt.plot(reshaped_zetas, reshaped_pot_energies)
-    plt.plot(reshaped_zetas, bias)
-    plt.plot(reshaped_zetas, total_energy)
-    plt.savefig('tmp2.pdf')
-
-
 def _n_simulation_steps(dt: float,
                         kwargs: dict) -> int:
     """Calculate the number of simulation steps from a set of keyword
@@ -172,10 +151,8 @@ class GMXAdaptive(MDDriver):
         energies = _get_data_from_xvg('energy.xvg')
 
         reduced_zetas, _ = _reduce_data(zetas, energies)
-        print(kappas)
-        print(reduced_zetas)
 
-        return [(kappas / 2) * (zeta - ref)**2 for zeta in reduced_zetas]
+        return (kappas / 2) * (np.asarray(reduced_zetas) - ref)**2
 
     @staticmethod
     def _get_obs_zetas_from_xvg(filename) -> list:
@@ -311,6 +288,6 @@ class GMXAdaptive(MDDriver):
                 ys.append(float(line.strip('\n').split('\t')[1]))
 
         plt.plot(xs, ys)
-        plt.savefig('tmp.pdf')
+        plt.savefig('free_energy_gmx.pdf')
 
         return np.asarray(xs), np.asarray(ys)

@@ -61,8 +61,6 @@ class MltrainAdaptive(MDDriver):
     def calculate_bias_energy(self, kappas, ref):
         """Calculates the bias energy for configurations in a trajectory"""
         bias = Bias(self.zeta_func, kappa=kappas, reference=ref)
-        print(kappas)
-        print(self.traj)
         return bias(self.traj)
 
     def run_md_window(self,

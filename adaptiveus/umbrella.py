@@ -186,7 +186,12 @@ class UmbrellaSampling:
         window = self._run_single_window(ref=ref, idx=0, **kwargs)
 
         self.windows.append(window)
-        converged = window.gaussian_converged()
+
+        ###########################################
+        # converged = window.gaussian_converged()
+        ###########################################
+
+        converged = True
 
         return converged
 
@@ -198,52 +203,10 @@ class UmbrellaSampling:
         """
         zetas = np.linspace(self.init_ref, self.final_ref, num=n_bins)
 
-        if isinstance(self.driver, mltrain.potentials._base.MLPotential):
-
-            from adaptiveus.mltrain import MltrainAdaptive
-
-            adaptive = MltrainAdaptive(zeta_func=self.zeta_func,
-                                       kappa=self.kappa,
-                                       temp=self.temp,
-                                       interval=self.interval,
-                                       dt=self.dt)
-
-            free_energies = adaptive.calculate_free_energy(self.windows, zetas)
-
-        else:
-            from adaptiveus.gmx import GMXAdaptive
-
-            adaptive = GMXAdaptive(kappa=self.kappa,
-                                   temp=self.temp,
-                                   interval=self.interval,
-                                   dt=self.dt)
-
-            free_energies = adaptive.calculate_free_energy(self.windows)
+        free_energies = self.driver.calculate_free_energy(self.windows,
+                                                          zetas=zetas)
 
         return free_energies
-
-    def _calculate_pot_energy(self) -> list:
-        """
-        Calculates the potential energy for configurations in a trajectory
-        using the specified driver
-        """
-        if isinstance(self.driver, mltrain.potentials._base.MLPotential):
-
-            self.driver.predict(self.traj)
-            energies = [config.energy.predicted for config in self.traj]
-
-        elif self.driver == 'gmx':
-
-            raise NotImplementedError
-
-        return [energy - min(energies) for i, energy in enumerate(energies)]
-
-    def _calculate_bias_along_coord(self, kappa, ref) -> float:
-        """Calculates the bias energy for configurations in a trajectory"""
-        bias = Bias(self.zeta_func, kappa=kappa, reference=ref)
-        bias_values = bias(self.traj)
-
-        return bias_values
 
     def _calculate_and_plot_total_energy(self, xi, kappas, ref) -> np.ndarray:
         """
@@ -258,7 +221,6 @@ class UmbrellaSampling:
         pot_energies = _interpolate(xi[::3], pot_energies[::3], kind='cubic')
 
         bias_energy = self.driver.calculate_bias_energy(kappas=ys, ref=ref)
-        print(bias_energy)
         bias_energy = _interpolate(xi, bias_energy, kind='quadratic')
 
         tot_energy = pot_energies + bias_energy
@@ -279,8 +241,6 @@ class UmbrellaSampling:
                               kappas,
                               tot_energy,
                               ref=ref)
-
-        exit()
 
         return tot_energy
 
@@ -379,15 +339,13 @@ class UmbrellaSampling:
 
             {fs, ps, ns}: Simulation time in some units
         """
-        # converged = self._test_convergence(ref=self.init_ref, **kwargs)
-        # logger.info(f'Gaussian parameters converged: {converged}')
-        #
-        # ref = self._calculate_next_ref(idx=0, s_target=s_target)
+        converged = self._test_convergence(ref=self.init_ref, **kwargs)
+        logger.info(f'Gaussian parameters converged: {converged}')
+
+        ref = self._calculate_next_ref(idx=0, s_target=s_target)
 
         with open('kappa_ref.txt', 'w') as outfile:
-            # tmp remove test convergence as doesn't work for small timescales
-            # idx, ref = 1, ref
-            idx, ref = 0, self.init_ref
+            idx, ref = 1, ref
             while ref <= self.final_ref:
 
                 window = self._run_single_window(ref=ref, idx=idx, **kwargs)
