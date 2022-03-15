@@ -125,6 +125,9 @@ class Windows(list):
         plt.axhline(y=0.1, linestyle='dotted', label='Threshold', color='k',
                     alpha=0.8)
 
+        with open('overlap_data.txt', 'w') as outfile:
+            print(f'{lhs_overlaps}, {rhs_overlaps}', file=outfile)
+
         plt.xlabel('Window index')
         plt.ylabel('Normalised overlap')
         plt.ylim(0, 1)
@@ -143,6 +146,10 @@ class Windows(list):
             raise ValueError("No windows are loaded")
 
         discrepancies = [window.discrepancy for window in self]
+
+        with open('discrepancy_data.txt', 'w') as outfile:
+            print(f'{discrepancies}', file=outfile)
+
         x_vals = [window.window_n for window in self]
 
         plt.plot(x_vals, discrepancies, marker='o', color='k', linestyle='--',

@@ -56,7 +56,11 @@ class MltrainAdaptive(MDDriver):
     def calculate_pot_energy(self):
         """"""
         self.mlp.predict(self.traj)
-        return [config.energy.predicted for config in self.traj]
+
+        energies = [config.energy.predicted for config in self.traj]
+
+        # Check this
+        return [energy - min(energies) for energy in energies]
 
     def calculate_bias_energy(self, kappas, ref):
         """Calculates the bias energy for configurations in a trajectory"""

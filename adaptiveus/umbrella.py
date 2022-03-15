@@ -1,12 +1,10 @@
 import mltrain.sampling.md
 import numpy as np
-import os
 from multiprocessing import Pool
 from scipy import special, optimize, interpolate
 from adaptiveus.log import logger
 from adaptiveus.adaptive import Windows
 from adaptiveus.config import Config
-from adaptiveus.bias import Bias
 from adaptiveus.plotting import _plot_1d_total_energy, _plot_2d_total_energy
 from adaptiveus.plotting import _get_minima_idxs
 from typing import Optional, Callable, Tuple
@@ -187,11 +185,7 @@ class UmbrellaSampling:
 
         self.windows.append(window)
 
-        ###########################################
-        # converged = window.gaussian_converged()
-        ###########################################
-
-        converged = True
+        converged = window.gaussian_converged()
 
         return converged
 
@@ -276,6 +270,7 @@ class UmbrellaSampling:
 
     def run_non_adaptive_sampling(self,
                                   n_windows: Optional[int] = 10,
+                                  test_convergence: bool = True,
                                   **kwargs) -> None:
         """
         Run non-adaptive umbrella sampling for ml-train
@@ -283,6 +278,8 @@ class UmbrellaSampling:
         -----------------------------------------------------------------------
         Arguments:
             n_windows: Number of windows to run umbrella sampling for
+
+            test_convergence: Run convergence testing
 
         -------------------
         Keyword Arguments:
@@ -293,21 +290,20 @@ class UmbrellaSampling:
         n_processes = min(len(refs)-1, Config.n_cores)
 
         # Parallelisation currently doesn't work with gmx
-        # with Pool(processes=n_processes) as pool:
+        with Pool(processes=n_processes) as pool:
 
-            # converged = self._test_convergence(ref=self.init_ref, **kwargs)
-            # logger.info(f'Gaussian parameters converged: {converged}')
-
+            converged = self._test_convergence(ref=self.init_ref, **kwargs)
+            logger.info(f'Gaussian parameters converged: {converged}')
 
             # Start from index 1 as test_convergence runs the first window
-            # results = [pool.apply(self._run_single_window,
-            #                       args=(ref.copy(),
-            #                             idx+1),
-            #                       kwds=deepcopy(kwargs))
-            #            for idx, ref in enumerate(refs[1:])]
+            results = [pool.apply(self._run_single_window,
+                                  args=(ref.copy(),
+                                        idx+1),
+                                  kwds=deepcopy(kwargs))
+                       for idx, ref in enumerate(refs[1:])]
 
-        # for result in results:
-        #     self.windows.append(result)
+        for result in results:
+            self.windows.append(result)
 
         for idx, ref in enumerate(refs):
             window = self._run_single_window(ref=ref, idx=idx, **kwargs)
