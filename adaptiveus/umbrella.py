@@ -182,10 +182,11 @@ class UmbrellaSampling:
     def _test_convergence(self, ref, **kwargs) -> bool:
         """Test the convergence of a fitted Gaussian over a simulation"""
         window = self._run_single_window(ref=ref, idx=0, **kwargs)
-
         self.windows.append(window)
 
         converged = window.gaussian_converged()
+
+        window.bins_converged()
 
         return converged
 
@@ -287,27 +288,31 @@ class UmbrellaSampling:
             {fs, ps, ns}: Simulation time in some units
         """
         refs = self._reference_values(n_windows)
-        n_processes = min(len(refs)-1, Config.n_cores)
 
-        # Parallelisation currently doesn't work with gmx
-        with Pool(processes=n_processes) as pool:
+        self._test_convergence(ref=self.init_ref, **kwargs)
 
-            converged = self._test_convergence(ref=self.init_ref, **kwargs)
-            logger.info(f'Gaussian parameters converged: {converged}')
-
-            # Start from index 1 as test_convergence runs the first window
-            results = [pool.apply(self._run_single_window,
-                                  args=(ref.copy(),
-                                        idx+1),
-                                  kwds=deepcopy(kwargs))
-                       for idx, ref in enumerate(refs[1:])]
-
-        for result in results:
-            self.windows.append(result)
-
-        for idx, ref in enumerate(refs):
-            window = self._run_single_window(ref=ref, idx=idx, **kwargs)
+        for idx, ref in enumerate(refs[1:]):
+            window = self._run_single_window(ref=ref, idx=idx+1, **kwargs)
             self.windows.append(window)
+
+        # n_processes = min(len(refs)-1, Config.n_cores)
+        #
+        # # Parallelisation currently doesn't work with gmx
+        # with Pool(processes=n_processes) as pool:
+        #
+        #     if test_convergence:
+        #         converged = self._test_convergence(ref=self.init_ref, **kwargs)
+        #         logger.info(f'Gaussian parameters converged: {converged}')
+        #
+        #     # Start from index 1 as test_convergence runs the first window
+        #     results = [pool.apply(self._run_single_window,
+        #                           args=(ref.copy(),
+        #                                 idx+1),
+        #                           kwds=deepcopy(kwargs))
+        #                for idx, ref in enumerate(refs[1:])]
+        #
+        # for result in results:
+        #     self.windows.append(result)
 
         for idx in range(n_windows - 1):
             self.windows.calculate_overlap(idx0=idx, idx1=idx+1)

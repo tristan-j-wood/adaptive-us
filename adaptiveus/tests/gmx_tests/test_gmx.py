@@ -18,6 +18,6 @@ def test_gmx_non_adaptive():
                                 init_ref=0.515,
                                 final_ref=0.7)
 
-    # adaptive.run_non_adaptive_sampling(n_windows=4, ps=5)
-
-    adaptive.run_adaptive_sampling(ps=10)
+    adaptive.run_non_adaptive_sampling(n_windows=4, ps=5)
+    #
+    # adaptive.run_adaptive_sampling(ps=10)

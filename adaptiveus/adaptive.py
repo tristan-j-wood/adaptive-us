@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText
 from adaptiveus.log import logger
 from adaptiveus.overlap import calculate_overlaps
 from scipy.optimize import curve_fit
@@ -210,7 +211,16 @@ def _powerspace(start, stop, power, num) -> np.ndarray:
     return np.power(np.linspace(start, stop, num=num), power).astype(int)
 
 
+def _kl_divergence(p, q):
+    return np.sum(np.where(p != 0, p * np.log(p / q), 0))
+
+
+def _diff(data_a, data_b):
+    return [abs(x - y) for x, y in zip(data_a, data_b)]
+
+
 class Window:
+
     """Data associated with a window from US"""
 
     def __init__(self,
@@ -312,16 +322,21 @@ class Window:
 
         return None
 
-    def _get_fractional_data(self) -> list:
+    def _get_fractional_data(self, powerspace=False) -> list:
         """Returns a list of the window data in 10% cumulative amounts"""
         if len(self.obs_zetas) == 0:
             raise AssertionError('Cannot get a fraction of non existing data. '
                                  'Please set window.obs_zetas')
 
-        data_intervals = _powerspace(self.number_of_samples / 10,
-                                     self.number_of_samples,
-                                     power=100,
-                                     num=10)
+        if powerspace:
+            data_intervals = _powerspace(self.number_of_samples / 10,
+                                         self.number_of_samples,
+                                         power=100,
+                                         num=10)
+        else:
+            data_intervals = np.linspace(self.number_of_samples / 10,
+                                         self.number_of_samples,
+                                         10).astype(int)
 
         return [self.obs_zetas[:interval] for interval in data_intervals]
 
@@ -330,6 +345,7 @@ class Window:
         Plots the histogram data and Gaussians fitted to 10% fractional
         incremements of the window trajectory
         """
+        plt.close()
         for gaussian in gaussians:
             plt.plot(self.window_range, gaussian(self.window_range))
 
@@ -382,13 +398,13 @@ class Window:
 
         return None
 
-    def _fractional_gaussians(self, data) -> list:
+    def _fractional_gaussians(self, data, bins) -> list:
         """Fits and plots Gaussians at fractions of the data"""
 
         fractional_gaussians = []
         for subdata in data:
             gaussian = Gaussian()
-            gaussian.fit(subdata)
+            gaussian.fit(subdata, bins=bins)
 
             fractional_gaussians.append(gaussian)
 
@@ -417,7 +433,8 @@ class Window:
         converged. Plots b and c parameters along the trajectory
         """
         fractional_data = self._get_fractional_data()
-        fractional_gaussians = self._fractional_gaussians(fractional_data)
+        fractional_gaussians = self._fractional_gaussians(fractional_data,
+                                                          bins=100)
 
         # Set threshold based on expected SD and fraction along coord for mean
         b_params = [gaussian.mean for gaussian in fractional_gaussians]
@@ -432,11 +449,112 @@ class Window:
 
         return b_converged * c_converged
 
-    def bins_converged(self):
-        """
-        Tests the convergence of the bin heights relative to previous bins
-        """
-        return NotImplementedError
+    @staticmethod
+    def _diff(data_a, data_b):
+        return [abs(x - y) for x, y in zip(data_a, data_b)]
+
+    def _plot_bin_diff(self) -> None:
+        """Plots the difference between bin heights and the fitted Gaussian"""
+
+        self.gaussian.fit(self.obs_zetas, bins=100)
+
+        hist, bin_edges = np.histogram(self.obs_zetas, density=False, bins=100)
+        bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
+
+        difference = _diff(self.gaussian(bin_centres), hist)
+
+        plt.close()
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(self.window_range, self.gaussian(self.window_range),
+                alpha=0.4, c='r', label='Fitted Gaussian')
+        ax.hist(bin_centres, len(bin_centres), weights=hist, alpha=0.3,
+                color='#1f77b4', label='Histogrammed data')
+        ax.scatter(bin_centres, difference, color='k', s=0.5, alpha=1.0,
+                   label='Difference')
+
+        bin_fraction = np.count_nonzero(hist == 0) / len(hist)
+        kl_div = _kl_divergence(hist, self.gaussian(bin_centres))
+        norm_kl_div = kl_div / len(self.obs_zetas)
+
+        annotated_text = AnchoredText(f'$S$ = {norm_kl_div:.3f}\n'
+                                      f'Bin fraction = {bin_fraction:.2f}',
+                                      loc=2)
+        ax.add_artist(annotated_text)
+        ax.legend(loc='upper right')
+        ax.set_xlabel('Reaction coordinate / Å')
+        ax.set_ylabel('Frequency')
+
+        plt.savefig('bin_entropy.pdf')
+        plt.close()
+
+        return None
+
+    @staticmethod
+    def _get_frac_kl_diverg(data, gaussians, bins) -> tuple:
+        """Calculates the Kull-Leibler divergence for fractions of the data.
+        Also calculates the fraction of bins containing no data"""
+
+        kl_divergences, bin_fracs = [], []
+        for subdata, gaussian in zip(data, gaussians):
+            hist, bin_edges = np.histogram(subdata, density=False, bins=bins)
+            bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
+
+            bin_fracs.append(np.count_nonzero(hist == 0) / len(hist))
+
+            kl_div = _kl_divergence(hist, gaussian(bin_centres))
+            kl_divergences.append(kl_div / len(subdata))
+
+        return kl_divergences, bin_fracs
+
+    def _plot_entropy_convergence(self) -> None:
+        """Plots the Kull-Leibler divergence as function of fraction of data"""
+
+        fractional_data = self._get_fractional_data()
+        fractional_gaussians = self._fractional_gaussians(fractional_data,
+                                                          bins=100)
+
+        kl_divergs, bin_fracs = self._get_frac_kl_diverg(fractional_data,
+                                                         fractional_gaussians,
+                                                         bins=100)
+
+        fractions = np.linspace(0.1, 1, 10)
+
+        plt.close()
+        fig, ax1 = plt.subplots()
+        ax2 = ax1.twinx()
+
+        kl_div_plt = ax1.plot(fractions, kl_divergs, linestyle='--',
+                              markersize=7, marker='o', mfc='white', color='r',
+                              label='KL-Divergence')
+
+        bin_fracs_plt = ax2.plot(fractions, bin_fracs, linestyle='--',
+                                 markersize=7, marker='o', mfc='white',
+                                 color='b', label='Bin fraction')
+
+        lines = kl_div_plt + bin_fracs_plt
+        labels = [label.get_label() for label in lines]
+        ax1.legend(lines, labels, loc='best')
+
+        ax1.set_xlabel('Fraction of window trajectory')
+        ax1.set_ylabel(r'$S$')
+
+        ax2.set_ylabel('Unoccupied bins fraction')
+
+        plt.ylim(0)
+        ax2.set_ylim(0, 1)
+        plt.tight_layout()
+        plt.savefig('entropy_convergence.pdf')
+        plt.close()
+
+        return None
+
+    def bins_converged(self) -> None:
+        """Tests convergence of the bin heights relative to previous bins"""
+
+        self._plot_bin_diff()
+        self._plot_entropy_convergence()
+
+        return None
 
 
 def area(gaussian) -> float:
@@ -484,9 +602,9 @@ class Gaussian:
 
         return gaussian_value(x, *self.params)
 
-    def fit(self, data) -> None:
+    def fit(self, data, bins=500) -> None:
         """Fit a Gaussian to a set of data"""
-        hist, bin_edges = np.histogram(data, density=False, bins=500)
+        hist, bin_edges = np.histogram(data, density=False, bins=bins)
         bin_centres = (bin_edges[1:] + bin_edges[:-1]) / 2
 
         initial_guess = [1.0, 1.0, 1.0]
